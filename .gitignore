@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output (rebuilt in CI / on release)
+dist/
+
+# TypeScript
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+config.json
+
+# Logs
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Scratch
+*.scratch.mjs

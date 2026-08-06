@@ -1,0 +1,171 @@
+# 03 上游 API 协议
+
+> 本文记录 Freebuff 上游后端（`https://www.codebuff.com`）的完整协议，
+> 均经官方 CLI 抓包 + 真实请求验证。实现见 `src/upstream.ts`。
+
+## 通用约定
+
+- Base URL：`https://www.codebuff.com`（可用 `UPSTREAM_BASE_URL` 覆盖）
+- 认证：`Authorization: Bearer <token>`（即登录拿到的 `authToken`）
+- 用户身份：非 SDK 请求携带 `x-freebuff-acting-user-id: <用户id>`
+- **User-Agent 分流**（免费档网关据此区分"CLI 创建"的会话与直接调用）：
+  - 会话 / Agent 运行 / 其他非 SDK 请求：`Bun/1.3.14`
+    （官方 CLI 是 Bun 运行时）
+  - chat 请求：`ai-sdk/openai-compatible/<ver>/codebuff ai-sdk/provider-utils/<ver> runtime/browser`
+- 调试：`DEBUG_UPSTREAM=1` 时打印每个上游请求的头与 body（token 脱敏）
+
+## 端点一览
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/healthz` | 存活检查 |
+| GET | `/api/v1/me?fields=id,email` | 当前用户信息 |
+| POST | `/api/v1/ads` | 广告位（官方 CLI 调用，非必需） |
+| POST | `/api/agents/validate` | 上报完整 Agent 定义（官方 CLI 发送 460KB payload） |
+| POST | `/api/v1/freebuff/session` | 创建/刷新免费会话 |
+| GET | `/api/v1/freebuff/session` | 轮询（等待室）或压缩会话 |
+| DELETE | `/api/v1/freebuff/session` | 结束会话 |
+| POST | `/api/v1/agent-runs` | 启动 / 结束 Agent 运行 |
+| POST | `/api/v1/chat/completions` | OpenAI 兼容 chat（流式/非流式） |
+| POST | `/api/logs` | 客户端日志上报（官方 CLI 调用，非必需） |
+
+## 1. 免费会话（session）
+
+### 创建 / 刷新
+
+```
+POST /api/v1/freebuff/session
+Authorization: Bearer <token>
+User-Agent: Bun/1.3.14
+x-freebuff-model: deepseek/deepseek-v4-flash   # 可选，指定模型
+Content-Type: application/json
+body: {}                                        # 官方 CLI 发空 body；"{}" 亦可
+```
+
+成功（`status: active`）：
+
+```json
+{
+  "status": "active",
+  "accessTier": "full",
+  "instanceId": "57e9bd9e-…",
+  "model": "deepseek/deepseek-v4-flash",
+  "admittedAt": "2026-08-06T17:35:38.571Z",
+  "expiresAt": "2026-08-06T18:35:38.571Z",
+  "remainingMs": 3011763,
+  "rateLimit": { "model": "…", "limit": 6, "period": "pacific_day", … }
+}
+```
+
+等待室（`status: queued`，带 `instanceId`、`position`、`queueDepth`、
+`estimatedWaitMs`）：代理返回 `503 + Retry-After` 并在后台轮询。
+
+其他状态：`disabled`（免费档不可用，404）、`none`/`ended`/`superseded`
+（需重新创建）、`country_blocked`/`banned`（403）、`model_locked`/
+`model_unavailable`（409）、429（限流）。
+
+### 轮询等待室
+
+```
+GET /api/v1/freebuff/session
+x-freebuff-instance-id: <instanceId>
+User-Agent: Bun/1.3.14
+```
+
+### 结束
+
+```
+DELETE /api/v1/freebuff/session
+User-Agent: Bun/1.3.14
+```
+
+## 2. Agent 运行（agent-runs）
+
+### 启动（START）
+
+```
+POST /api/v1/agent-runs
+Authorization: Bearer <token>
+x-freebuff-acting-user-id: <用户id>
+User-Agent: Bun/1.3.14
+
+{ "action": "START", "agentId": "base2-free-deepseek-flash", "ancestorRunIds": [] }
+```
+
+> `ancestorRunIds: []` 与官方 CLI 完全一致（实测必填格式）。
+> `agentId` 必须与 session 的 model 匹配，否则可能报
+> `free_mode_invalid_agent_hierarchy`。
+
+响应：`{ "runId": "26a22543-…" }`
+
+### 结束（FINISH）
+
+```
+POST /api/v1/agent-runs
+{ "action": "FINISH", "runId": "…", "status": "completed",
+  "totalSteps": 0, "directCredits": 0, "totalCredits": 0 }
+```
+
+响应：`{ "success": true }`（best-effort，失败不致命）
+
+## 3. Chat Completions（核心）
+
+```
+POST /api/v1/chat/completions
+Authorization: Bearer <token>
+x-freebuff-acting-user-id: <用户id>
+Content-Type: application/json
+User-Agent: ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/browser
+Accept: */*
+```
+
+请求体 = OpenAI 载荷 + 两个注入块：
+
+```json
+{
+  "model": "deepseek/deepseek-v4-flash",
+  "messages": [
+    { "role": "system", "content": "You are Buffy, the strategic coding assistant. …" },
+    { "role": "user", "content": "Reply with exactly: PONG" }
+  ],
+  "codebuff_metadata": {
+    "run_id": "26a22543-…",
+    "client_id": "d3jy2o9a54e",
+    "cost_mode": "free",
+    "trace_session_id": "3d370235-…",
+    "llm_step_number": "1",
+    "freebuff_instance_id": "57e9bd9e-…"
+  },
+  "provider": { "data_collection": "deny" }
+}
+```
+
+**关键**：system 消息必须包含 `You are Buffy, the strategic coding assistant`
+（免费档 CLI 网关），详见 [04-请求格式破解](04-请求格式破解.md)。
+
+支持 `stream: true`（SSE，`chat.completion.chunk`）与非流式
+（`chat.completion`，带 `usage`）。
+
+响应特征：
+- `Content-Type: text/event-stream`（流式）或 `application/json`
+- `reasoning_content`：DeepSeek 系列返回思考过程
+- `provider: "DeepSeek"` 等标识
+
+## 4. 其他
+
+- `/api/agents/validate`：官方 CLI 在每次启动时把全部 Agent 定义
+  （含 systemPrompt、toolNames、spawnableAgents）POST 给上游做校验。
+  freebuff2api 不需要调用它也能通过网关（已实测）。
+- `/api/v1/ads`：等待室广告，`Freebuff-CLI/<ver>` UA，非必需。
+
+## 状态码速查（chat 端点）
+
+| 状态 | 含义 | 代理处理 |
+| ---- | ---- | -------- |
+| 200 | 成功（流式/非流式） | 透传 |
+| 400 | 请求错误；含 `runId not found` 等 | 轮换 run 重试一次 |
+| 401 | token 失效 | 冷却 30 分钟，换令牌 |
+| 403 `free_mode_cli_required` | 缺少 CLI system 标记 | 注入标记后重试 |
+| 403 `free_mode_invalid_agent_hierarchy` | run agent 与 model 不匹配 | 修正 agentId |
+| 429 | 限流 | 按 Retry-After 返回 |
+| 503 | 等待室 / 无健康令牌 | 带 Retry-After 返回 |

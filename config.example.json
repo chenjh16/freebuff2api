@@ -1,0 +1,10 @@
+{
+  "LISTEN_ADDR": ":8080",
+  "UPSTREAM_BASE_URL": "https://www.codebuff.com",
+  "LOGIN_BASE_URL": "https://freebuff.com",
+  "AUTH_TOKENS": ["paste-your-freebuff-token-here"],
+  "ROTATION_INTERVAL": "6h",
+  "REQUEST_TIMEOUT": "15m",
+  "API_KEYS": [],
+  "HTTP_PROXY": ""
+}

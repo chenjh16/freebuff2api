@@ -1,0 +1,56 @@
+{
+  "name": "freebuff2api",
+  "version": "0.1.0",
+  "description": "OpenAI-compatible reverse proxy for the Freebuff (freebuff.com) coding API. Zero runtime dependencies.",
+  "license": "MIT",
+  "author": "chenjh16",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chenjh16/freebuff2api.git"
+  },
+  "homepage": "https://github.com/chenjh16/freebuff2api#readme",
+  "bugs": {
+    "url": "https://github.com/chenjh16/freebuff2api/issues"
+  },
+  "keywords": [
+    "freebuff",
+    "codebuff",
+    "openai",
+    "openai-compatible",
+    "proxy",
+    "api",
+    "cli",
+    "reverse-proxy",
+    "ai",
+    "free-ai"
+  ],
+  "private": false,
+  "type": "module",
+  "bin": {
+    "freebuff2api": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "docs/",
+    "tools/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.0"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "login": "bun run src/index.ts login",
+    "build": "bun build ./src/index.ts --target=node --outfile=dist/index.js",
+    "typecheck": "tsc -b --noEmit",
+    "check": "tsc -b --noEmit && bun run build"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
