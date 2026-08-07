@@ -30,6 +30,10 @@
   github.com/chenjh16/freebuff2api）；引导页/加载页同步更新
 - 文档域名更新为线上真实域名 `open.freebuff.app`（README 中英文、docs 08
   托管部署指南），并补充 `PROXY_SECRET` 部署环境变量说明
+- README 结构调整为**作用与使用方法优先**：中英文两版均把「项目作用 /
+  What it is」与「快速开始 / Quick start」（托管 Web 控制台 + 本地 CLI 两种
+  方式）提到最前面，工作原理、登录、配置、端点、托管部署等深入内容随后；
+  docs 三个索引 README 同步补充“上手优先”指引
 
 ### Added
 
@@ -55,6 +59,15 @@
 - 单元测试 `tests/unit/web-proxy.test.ts`：默认 key 解析、CORS 预检、
   未配置 handler 行为；`tests/unit/account.test.ts`（sk-fb-* key 加解密/
   吊销）与 server 用户 key 流程测试
+- **站点访问门禁（`SITE_ACCESS_TOKEN`）**：托管 Web 控制台可选的前门鉴权。
+  在部署环境设置 `SITE_ACCESS_TOKEN`（逗号分隔，支持多个）后，访问站点
+  会先显示锁屏，访客须输入有效 token（或直接用 `https://…/?token=…`
+  打开站点）才能解锁；验证通过后浏览器将 token 保存在 `localStorage`，
+  每次访问重新校验（刷新不再要求输入）。校验由 `POST /api/gate/verify`
+  完成（SHA-256 恒定时间比较，防时序侧信道）。未设置时控制台保持开放。
+  门禁只影响网页控制台，`/v1` 接口仍由 `API_KEYS` 保护。新增
+  `app/lib/gate.ts`、`app/api/gate/verify/route.ts` 与单元测试
+  `tests/unit/gate.test.ts`
 - 文档：docs 08 托管部署指南（中英）、README 托管部署章节；
   `dev` 脚本改为 Next.js 应用（`dev:cli` 运行独立代理）
 

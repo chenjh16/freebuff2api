@@ -39,6 +39,7 @@ CLI-gate system-marker injection).
 | GET | `/api/auth/status` | Poll the login until the user signs in |
 | POST | `/api/auth/register` | Validate the account token, mint an `sk-fb-…` key |
 | POST | `/api/auth/revoke` | Revoke an API key (sign out) |
+| POST | `/api/gate/verify` | Check a site access token (unlocks the console when the gate is on) |
 
 Authentication for the API surface is `Authorization: Bearer <key>` or
 `x-api-key: <key>`.
@@ -50,6 +51,7 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | `AUTH_TOKENS` | ✅ | — | Freebuff auth token(s), comma-separated. Until set, the proxy answers `503` with a clear message. |
 | `PROXY_SECRET` | no | auto | Stable secret that encrypts web-login API keys (`sk-fb-…`). Set a fixed value so keys survive redeploys. |
 | `API_KEYS` | no | `sk-freebuff2api-2026` | Keys clients must present. The hosted app falls back to this default so the public endpoint is never left open; set the env var to override. |
+| `SITE_ACCESS_TOKEN` | no | — | Gate token(s) for the web console, comma-separated. When set, visitors must present one (typed into the lock screen or via `?token=…`) to unlock the site. |
 | `UPSTREAM_BASE_URL` | no | `https://www.codebuff.com` | Freebuff backend base URL. |
 | `REQUEST_TIMEOUT` | no | `15m` | Upstream request timeout. |
 | `ROTATION_INTERVAL` | no | `6h` | Agent-run rotation interval. |
@@ -84,6 +86,25 @@ survive redeploys), else from a hash of `AUTH_TOKENS`, else a secret
 persisted to a local file (`.data/proxy-secret`, so keys survive process
 restarts even without env vars), else a per-process random (keys then reset
 on restart).
+
+## Site access gate (optional)
+
+By default anyone can open the console. To restrict who may use the site,
+set `SITE_ACCESS_TOKEN` in the deployment environment (comma-separated list
+allowed). The page then shows a lock screen:
+
+- Visitors type the token into the lock screen, or open the site directly
+  with the token in the URL: `https://open.freebuff.app/?token=…`
+- `POST /api/gate/verify` validates the token (constant-time SHA-256
+  comparison) and returns `{ok: true}` or `401`.
+- Once accepted, the browser keeps the token in `localStorage` and
+  re-verifies it on every visit — refreshing the page does not re-prompt.
+- An invalid `?token=…` is stripped from the URL and the lock screen is shown
+  with an error.
+
+> The gate is the console's **front door only**. The `/v1` API surface is
+> always protected by `API_KEYS` regardless of the gate. Without
+> `SITE_ACCESS_TOKEN` the console behaves exactly as before (open).
 
 > ⚠️ **`AUTH_TOKENS` vs `API_KEYS`** — these are different credentials.
 > `AUTH_TOKENS` is your **freebuff.com account token** (the token your

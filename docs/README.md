@@ -12,6 +12,13 @@ and **English** with semantically identical content, under the `zh/` and
 | 🇨🇳 中文 | [docs/zh/README.md](zh/README.md) |
 | 🇬🇧 English | [docs/en/README.md](en/README.md) |
 
+> 🚀 **上手优先**：项目作用与使用方法（本地 CLI / 托管 Web 控制台两种方式）
+> 见仓库根目录 [`README.md`](../README.md) 的「项目作用」与「快速开始」章节。
+>
+> 🚀 **Usage-first**: the project purpose and how to use it (standalone CLI /
+> hosted web console) are at the top of the root [`README.md`](../README.md)
+> — see **What it is** and **Quick start**.
+
 - **中文版**：`zh/` 目录（README + 01~08，含核心的免费模式网关破解分析）
 - **English version**: `en/` directory (README + 01~08, including the core
   free-tier CLI gate analysis)

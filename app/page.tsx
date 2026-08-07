@@ -29,6 +29,7 @@ interface PendingLogin {
 
 const SESSION_KEY = "freebuff2api_session";
 const PENDING_KEY = "freebuff2api_pending";
+const GATE_KEY = "freebuff2api_site_token";
 const DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
 
 function uuid(): string {
@@ -57,6 +58,39 @@ function writeStored(key: string, value: unknown): void {
 function clearStored(key: string): void {
   try {
     window.localStorage.removeItem(key);
+  } catch {
+    // Ignore.
+  }
+}
+
+/**
+ * Ask the server whether a site access token unlocks the console.
+ * `enabled: false` means no SITE_ACCESS_TOKEN is configured — the site is
+ * open and every token is accepted.
+ */
+async function callGateVerify(token: string): Promise<{ ok: boolean; enabled: boolean }> {
+  try {
+    const resp = await fetch("/api/gate/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+      cache: "no-store",
+    });
+    const body = (await resp.json().catch(() => null)) as { ok?: boolean; enabled?: boolean } | null;
+    if (body?.enabled === false) return { ok: true, enabled: false };
+    return { ok: resp.ok && body?.ok === true, enabled: true };
+  } catch {
+    // Cannot reach the verify endpoint — stay locked.
+    return { ok: false, enabled: true };
+  }
+}
+
+/** Remove ?token=… from the URL so it is not shared or re-read later. */
+function stripTokenFromUrl(): void {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("token");
+    window.history.replaceState(null, "", url.toString());
   } catch {
     // Ignore.
   }
@@ -103,6 +137,11 @@ export default function Home() {
   const [booting, setBooting] = useState(true);
   const [models, setModels] = useState<string[]>([]);
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
+
+  // site access gate
+  const [gateOpen, setGateOpen] = useState(false);
+  const [gateBusy, setGateBusy] = useState(false);
+  const [gateError, setGateError] = useState("");
 
   // login flow
   const [pending, setPending] = useState<PendingLogin | null>(null);
@@ -221,6 +260,19 @@ export default function Home() {
     [finishRegister, stopPolling],
   );
 
+  const unlock = useCallback(async (token: string) => {
+    setGateBusy(true);
+    setGateError("");
+    const verdict = await callGateVerify(token);
+    if (verdict.ok) {
+      writeStored(GATE_KEY, token);
+      setGateOpen(true);
+    } else {
+      setGateError("Invalid access token.");
+    }
+    setGateBusy(false);
+  }, []);
+
   const startLogin = useCallback(async () => {
     setLoginBusy(true);
     setLoginError("");
@@ -264,10 +316,35 @@ export default function Home() {
     pollRef.current = setInterval(() => void pollStatus(p), 6000);
   }, [pollStatus, stopPolling]);
 
-  // Boot: validate a stored session, else restore a pending login, else idle.
+  // Boot: unlock the site gate, then validate a stored session, else restore
+  // a pending login, else idle.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // 1. Site access gate — unlock via ?token=…, a previously verified
+      // stored token, or when the gate is disabled server-side.
+      const urlToken = new URLSearchParams(window.location.search).get("token");
+      const storedToken = readStored<string>(GATE_KEY);
+      const candidate = urlToken ?? storedToken ?? "";
+      const verdict = await callGateVerify(candidate);
+      if (cancelled) return;
+      if (verdict.ok) {
+        setGateOpen(true);
+        if (urlToken) {
+          writeStored(GATE_KEY, urlToken);
+          stripTokenFromUrl();
+        }
+      } else {
+        if (urlToken) {
+          // A URL-supplied token was rejected — clear it and show the gate.
+          stripTokenFromUrl();
+          setGateError("That access token was rejected.");
+        }
+        setGateOpen(false);
+        setBooting(false);
+        return; // stay locked — do not touch session/pending state
+      }
+
       const stored = readStored<Session>(SESSION_KEY);
       if (stored?.authToken) {
         try {
@@ -420,6 +497,16 @@ export default function Home() {
     );
   }
 
+  if (!gateOpen) {
+    return (
+      <div>
+        <div className="mesh" />
+        <div className="grid-overlay" />
+        <GateView busy={gateBusy} error={gateError} onSubmit={(token) => void unlock(token)} />
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="mesh" />
@@ -539,6 +626,79 @@ function SiteHeader({ right }: { right?: React.ReactNode }) {
         {right}
       </div>
     </header>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Site access gate (shown when SITE_ACCESS_TOKEN is configured and the
+// visitor has not presented a valid token yet)
+// ---------------------------------------------------------------------------
+
+function GateView(props: { busy: boolean; error: string; onSubmit: (token: string) => void }) {
+  const { busy, error, onSubmit } = props;
+  const [value, setValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  return (
+    <div className="gate-wrap">
+      <a className="gate-brand" href="https://freebuff.com" target="_blank" rel="noopener noreferrer">
+        <img className="boot-logo" src="/logo-icon.png" alt="Freebuff" width="28" height="28" />
+        <span className="boot-text">freebuff</span>
+      </a>
+
+      <div className="gate-card">
+        <div className="gate-lock">
+          <svg
+            viewBox="0 0 24 24"
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="4" y="11" width="16" height="10" rx="2" />
+            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+        </div>
+        <h1>Restricted access</h1>
+        <p>This console is private. Enter the site access token to continue.</p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const token = value.trim();
+            if (token && !busy) onSubmit(token);
+          }}
+        >
+          <input
+            ref={inputRef}
+            className="gate-input"
+            type="password"
+            autoComplete="off"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="Site access token"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            disabled={busy}
+          />
+          <button className="btn btn-big" type="submit" disabled={busy || !value.trim()}>
+            {busy ? <span className="spin" /> : null}
+            Unlock
+          </button>
+        </form>
+        {error ? <p className="login-error">{error}</p> : null}
+      </div>
+
+      <p className="gate-hint">This deployment is access-restricted.</p>
+    </div>
   );
 }
 

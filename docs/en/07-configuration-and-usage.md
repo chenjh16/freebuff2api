@@ -44,11 +44,19 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 | `REQUEST_TIMEOUT` | `15m` | Upstream request timeout (Go-style durations) |
 | `ROTATION_INTERVAL` | `6h` | Run rotation interval |
 | `API_KEYS` | empty = open | Optional keys clients must present to the proxy |
+| `SITE_ACCESS_TOKEN` | empty = gate off | Hosted web console gate token(s), comma-separated. When set, visitors must present one (typed into the lock screen, or via `?token=…`) to unlock the site |
 | `HTTP_PROXY` | empty | Upstream HTTP(S) proxy; precedence is `--http-proxy` > config.json > environment |
 | `MAX_BODY_SIZE` | `16MB` | Maximum chat request body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32` | Maximum in-flight chat requests |
 | `USER_AGENT` | see below | Override the chat request User-Agent |
 | `DEBUG_UPSTREAM` | off | `1` prints upstream request details (token redacted) |
+
+> `SITE_ACCESS_TOKEN` (web app only) is the hosted console's **front door**:
+> when set, `POST /api/gate/verify` checks presented tokens against it
+> (constant-time SHA-256 comparison). Visitors either type the token into the
+> lock screen or open the site with `?token=…`; once accepted, the browser
+> keeps it in `localStorage` and re-verifies it on each visit. It does not
+> affect the `/v1` API, which stays protected by `API_KEYS`.
 
 Default `USER_AGENT` (matches the official SDK; any version is verified to
 pass the gate):

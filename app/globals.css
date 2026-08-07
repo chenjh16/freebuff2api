@@ -835,3 +835,98 @@ footer.site {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ---------- site access gate ---------- */
+
+.gate-wrap {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  padding: 24px;
+}
+
+.gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  opacity: 0.85;
+  transition: opacity 0.2s ease;
+}
+
+.gate-brand:hover {
+  opacity: 1;
+}
+
+.gate-card {
+  width: min(400px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 32px 28px;
+  text-align: center;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 22px 60px rgba(2, 6, 23, 0.5);
+}
+
+.gate-lock {
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: 1px solid rgba(79, 141, 255, 0.35);
+  color: var(--accent-bright);
+}
+
+.gate-card h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.gate-card > p {
+  margin: 0 0 22px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.gate-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+input.gate-input {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  color: var(--text);
+  background: #0a101e;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 13px 14px;
+  outline: none;
+  text-align: center;
+  letter-spacing: 0.04em;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input.gate-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 141, 255, 0.12);
+}
+
+.gate-hint {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  text-align: center;
+}

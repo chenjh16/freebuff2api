@@ -19,29 +19,94 @@
 
 # English
 
-OpenAI-compatible reverse proxy for the **Freebuff** coding API
-([freebuff.com](https://freebuff.com), the free AI coding agent). It exposes
-a standard OpenAI `/v1` surface and relays requests to the Freebuff backend
-using a free account's auth token — so any OpenAI-compatible client (Claude
-Code, Cline, LobeChat, curl, …) can drive Freebuff's free models.
+## What it is
+
+freebuff2api is an **OpenAI-compatible reverse proxy** for the
+**Freebuff** coding API ([freebuff.com](https://freebuff.com), the free AI
+coding agent). It exposes a standard OpenAI `/v1` surface and relays requests
+to the Freebuff backend using a free account's auth token — so any
+OpenAI-compatible client (Claude Code, Cline, LobeChat, curl, …) can drive
+Freebuff's free models.
+
+You can use it two ways:
+
+- **Hosted web console + API** — the repository ships a Next.js web app that
+  is deployed to a public URL (`https://open.freebuff.app`): sign in with your
+  Freebuff account in the browser, get your own `sk-fb-*` API key, and point
+  any OpenAI-compatible client at the public `/v1` endpoint. No VPS needed
+  (see [Quick start](#quick-start) and
+  [Hosted deployment](#hosted-deployment-freebuff)).
+- **Standalone local proxy** — run the CLI server on your own machine
+  (`bun run dev:cli`), give it your auth token, and point clients at
+  `http://localhost:23333/v1`.
+
+Zero runtime dependencies for the core proxy. Written in TypeScript for
+[Bun](https://bun.sh) (also runs on Node 22+ with
+`node --experimental-strip-types` or after `bun run build:cli`).
 
 > 📖 Full documentation: [`docs/`](docs/README.md) (bilingual by directory,
 > semantically identical). English: [`docs/en/`](docs/en/README.md) —
 > Chinese: [`docs/zh/`](docs/zh/README.md). Debugging & analysis tools in
 > [`tools/`](tools/README.md).
-
-Zero runtime dependencies for the core proxy. Written in TypeScript for
-[Bun](https://bun.sh) (also runs on Node 22+ with
-`node --experimental-strip-types` or after `bun run build:cli`). The hosted
-deployment adds a Next.js App Router app (`app/`) that mounts the same proxy
-handler on a public URL — no VPS needed (see
-[Hosted deployment](#hosted-deployment-freebuff)).
-
+>
 > This project was implemented against the live Freebuff backend protocol
 > (verified against the official
 > [`CodebuffAI/freebuff`](https://github.com/CodebuffAI/freebuff) client
 > source). It is a third-party tool, not affiliated with Freebuff. Free
 > access can be gated by the service at any time — use responsibly.
+
+## Quick start
+
+### Option A — hosted web console (recommended, no local setup)
+
+The hosted app is already deployed at **`https://open.freebuff.app`**:
+
+1. Open the site and **sign in with your Freebuff account** (browser
+   device-code flow, same as the official CLI).
+2. If you don't have an API key yet, one is generated for you
+   automatically (`sk-fb-…`). The console shows your **Base URL** and ready
+   **curl** test commands (Windows & UNIX) with one-click copy.
+3. Point any OpenAI-compatible client at the public endpoint:
+
+```bash
+curl https://open.freebuff.app/v1/chat/completions \
+  -H "Authorization: Bearer <your sk-fb-... API key>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+The console also includes a built-in **model playground** (streaming replies +
+Thinking output) so you can try models right in the browser.
+
+> The site may be protected by a **gate token** (`SITE_ACCESS_TOKEN`): if you
+> see a lock screen, enter the token or open the site with
+> `https://open.freebuff.app/?token=…`. The gate is only the console's front
+> door — the `/v1` API is always protected by your API key.
+
+### Option B — standalone local proxy (CLI)
+
+```bash
+bun install
+
+# Option B1 (recommended): sign in with a device-code login flow.
+# Prints a URL to open in your browser; credentials are stored at
+# ~/.config/freebuff2api/credentials.json.
+bun run login
+
+# Option B2: provide a token directly
+# export AUTH_TOKENS="<your freebuff.com token>"
+
+bun run dev:cli    # standalone proxy server (was `bun run dev` in older versions)
+```
+
+```bash
+curl http://localhost:23333/v1/models
+curl http://localhost:23333/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 
 ## How it works
 
@@ -69,32 +134,6 @@ Freebuff's free tier is session-gated. For every chat request the proxy:
 4. **Rotates tokens** — with multiple `AUTH_TOKENS`, requests round-robin
    across tokens; a token that gets rejected upstream (401) is cooled down for
    30 minutes instead of poisoning every request.
-
-## Quick start
-
-```bash
-bun install
-
-# Option A (recommended): sign in with a device-code login flow.
-# Prints a URL to open in your browser; credentials are stored at
-# ~/.config/freebuff2api/credentials.json.
-bun run login
-
-# Option B: provide a token directly
-# export AUTH_TOKENS="<your freebuff.com token>"
-
-bun run dev:cli    # standalone proxy server (was `bun run dev` in older versions)
-bun run dev        # Next.js web app: same /v1 API + live console (hosted-deploy shape)
-```
-
-```bash
-curl http://localhost:23333/v1/models
-curl http://localhost:23333/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
-```
-
-Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 
 ## Login
 
@@ -133,6 +172,7 @@ CLI option > `config.json` > environment variable**.
 | `REQUEST_TIMEOUT`   | `15m`                     | Upstream request timeout (Go-style durations)          |
 | `ROTATION_INTERVAL` | `6h`                      | How long an agent run lives before rotation            |
 | `API_KEYS`          | *(empty = open)*          | Comma-separated keys clients must present to the proxy |
+| `SITE_ACCESS_TOKEN`| *(empty = gate off)*      | Hosted web console gate: visitors must enter this token (or open the site with `?token=…`) to use the console |
 | `HTTP_PROXY`        | *(empty)*                 | Optional upstream HTTP(S) proxy; `--http-proxy` > `config.json` > environment |
 | `MAX_BODY_SIZE`     | `16MB`                    | Maximum `/v1/chat/completions` body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32`                | Maximum concurrent chat requests                  |
@@ -159,7 +199,7 @@ keeps the proxy working if the fetch fails.
 
 ## Hosted deployment (Freebuff)
 
-The repository also ships a Next.js App Router app (`app/`) that mounts the
+The repository ships a Next.js App Router app (`app/`) that mounts the
 exact same proxy handler behind `/v1`, so the project can be deployed to
 Freebuff hosting without a VPS:
 
@@ -175,6 +215,7 @@ Deployment environment:
 | `AUTH_TOKENS` | ✅       | Freebuff auth token(s); the proxy answers 503 until this is set         |
 | `PROXY_SECRET`| no       | Stable secret that encrypts web-login API keys (`sk-fb-…`); set a fixed value so keys survive redeploys |
 | `API_KEYS`    | no       | Client keys; **defaults to `sk-freebuff2api-2026`** on the hosted app    |
+| `SITE_ACCESS_TOKEN`| no    | Locks the web console: visitors must enter this token (or arrive via `?token=…`) before the page unlocks; unset = console open |
 
 Every other variable from the configuration table above
 (`UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, …) works the same in the hosted app.
@@ -195,6 +236,11 @@ Notes:
 - Hosting runs `next build` automatically; `build:web` only produces the
   build output and never starts a server.
 - `/` serves a small live console (health, model list, try-a-chat).
+- **Site gate:** set `SITE_ACCESS_TOKEN` and the console shows a lock screen
+  until the visitor enters the token (or opens the site with
+  `https://…/?token=…`); the browser then remembers it. Unset = console open.
+  The gate is the console's front door only — `/v1` stays protected by
+  `API_KEYS`.
 - `/healthz` answers `200 {ok:false, configured:false}` until `AUTH_TOKENS`
   is set, so hosting health probes stay green while the proxy waits for config.
 - CORS is open on `/v1/*` so browser clients can call the endpoint directly.
@@ -250,26 +296,83 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Report bugs / request features via
 
 # 中文
 
+## 项目作用
+
 **freebuff2api** 是 **Freebuff**（[freebuff.com](https://freebuff.com)，免费的
-AI 编码助手）编码 API 的 OpenAI 兼容反向代理。它在本地暴露标准的 OpenAI
+AI 编码助手）编码 API 的 **OpenAI 兼容反向代理**。它在本地暴露标准的 OpenAI
 `/v1` 接口，用免费账号的 auth token 把请求转发到 Freebuff 后端——让任何
 OpenAI 兼容客户端（Claude Code、Cline、LobeChat、curl…）都能驱动 Freebuff
 的免费模型。
+
+有两种使用方式：
+
+- **托管 Web 控制台 + API** —— 仓库内置 Next.js 应用，已部署到公网域名
+  （`https://open.freebuff.app`）：在浏览器里用 Freebuff 账号登录，自动获得
+  专属 `sk-fb-*` API Key，再把任意 OpenAI 兼容客户端指向公网 `/v1` 端点。
+  无需 VPS（见[快速开始](#快速开始)与[托管部署](#托管部署freebuff)）。
+- **独立本地代理** —— 在自己机器上运行 CLI 服务器（`bun run dev:cli`），
+  配置 auth token 后，把客户端指向 `http://localhost:23333/v1` 即可。
+
+核心代理零运行时依赖。TypeScript 编写，面向 [Bun](https://bun.sh)（也可在
+Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build:cli` 后运行）。
 
 > 📖 完整中文文档见 [`docs/zh/`](docs/zh/README.md)，英文版见
 > [`docs/en/`](docs/en/README.md)（中英内容语义一致）。文档包含上游协议
 > 逆向分析、免费模式网关破解过程、端到端测试记录。调试与分析工具见
 > [`tools/`](tools/README.md)。
-
-核心代理零运行时依赖。TypeScript 编写，面向 [Bun](https://bun.sh)（也可在
-Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build:cli` 后运行）。
-托管部署额外内置一个 Next.js App Router 应用（`app/`），把同一代理挂到
-公网域名上——无需 VPS（见[托管部署](#托管部署freebuff)）。
-
+>
 > 本项目基于对线上 Freebuff 后端协议的实际逆向实现（已对照官方
 > [`CodebuffAI/freebuff`](https://github.com/CodebuffAI/freebuff) 客户端源码
 > 验证）。这是第三方工具，与 Freebuff 无关联。免费通道随时可能被官方
 > 收紧——请合理使用。
+
+## 快速开始
+
+### 方式 A — 托管 Web 控制台（推荐，无需本地环境）
+
+托管应用已部署在 **`https://open.freebuff.app`**：
+
+1. 打开网站，用 **Freebuff 账号登录**（浏览器设备码流程，与官方 CLI 相同）。
+2. 如果还没有 API Key，会自动为你生成一个（`sk-fb-…`）。控制台会显示你的
+   **Base URL** 和现成的 **curl** 测试命令（Windows / UNIX，一键复制）。
+3. 把任意 OpenAI 兼容客户端指向公网端点：
+
+```bash
+curl https://open.freebuff.app/v1/chat/completions \
+  -H "Authorization: Bearer <你的 sk-fb-... API Key>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+控制台还内置**模型测试界面**（流式回复 + Thinking 输出），可以直接在浏览器
+里试用模型。
+
+> 网站可能受**门禁 token**（`SITE_ACCESS_TOKEN`）保护：如果看到锁屏，输入
+> token，或直接打开 `https://open.freebuff.app/?token=…`。门禁只是控制台的
+> "前门"——`/v1` API 始终由你的 API Key 保护。
+
+### 方式 B — 独立本地代理（CLI）
+
+```bash
+bun install
+
+# 方式 B1（推荐）：设备码登录，凭证存 ~/.config/freebuff2api/credentials.json
+bun run login
+
+# 方式 B2：直接提供 token
+# export AUTH_TOKENS="<你的 freebuff.com token>"
+
+bun run dev:cli    # 独立代理服务器（旧版本为 `bun run dev`）
+```
+
+```bash
+curl http://localhost:23333/v1/models
+curl http://localhost:23333/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+把任何 OpenAI 兼容客户端指向 `http://localhost:23333/v1` 即可。
 
 ## 工作原理
 
@@ -292,30 +395,6 @@ Freebuff 的免费档按**会话（session）**发放。对每次 chat 请求，
    > messages 中前置/合并该标记，普通 OpenAI 客户端无需感知。
 4. **轮换令牌** — 配置多个 `AUTH_TOKENS` 时轮询使用；被上游 401 拒绝的
    token 冷却 30 分钟，避免污染所有请求。
-
-## 快速开始
-
-```bash
-bun install
-
-# 方式 A（推荐）：设备码登录，凭证存 ~/.config/freebuff2api/credentials.json
-bun run login
-
-# 方式 B：直接提供 token
-# export AUTH_TOKENS="<你的 freebuff.com token>"
-
-bun run dev:cli    # 独立代理服务器（旧版本为 `bun run dev`）
-bun run dev        # Next.js Web 应用：同一套 /v1 API + 在线控制台（托管部署形态）
-```
-
-```bash
-curl http://localhost:23333/v1/models
-curl http://localhost:23333/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
-```
-
-把任何 OpenAI 兼容客户端指向 `http://localhost:23333/v1` 即可。
 
 ## 登录
 
@@ -351,6 +430,7 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 | `REQUEST_TIMEOUT`   | `15m`                        | 上游请求超时（Go 风格时长）                 |
 | `ROTATION_INTERVAL` | `6h`                         | run 轮换间隔                                |
 | `API_KEYS`          | *(空 = 开放)*                | 客户端访问本代理需携带的 key                 |
+| `SITE_ACCESS_TOKEN`| *(空 = 不启用)*             | 托管 Web 控制台门禁：访客须输入该 token（或用 `?token=…` 打开站点）才能使用控制台 |
 | `HTTP_PROXY`        | *(空)*                       | 可选的上游 HTTP(S) 代理；优先级为 `--http-proxy` > `config.json` > 环境变量 |
 | `MAX_BODY_SIZE`     | `16MB`                       | `/v1/chat/completions` 请求体上限（16,000,000 字节） |
 | `MAX_CONCURRENT_REQUESTS` | `32`                   | 最大并发 chat 请求数                         |
@@ -377,7 +457,7 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 
 ## 托管部署（Freebuff）
 
-仓库同时内置一个 Next.js App Router 应用（`app/`），把完全相同的代理
+仓库内置一个 Next.js App Router 应用（`app/`），把完全相同的代理
 handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 
 - **域名：** `https://open.freebuff.app`
@@ -392,6 +472,7 @@ handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 | `AUTH_TOKENS` | ✅   | Freebuff auth token；未设置前代理返回 503                                |
 | `PROXY_SECRET`| 否   | 加密网页登录 API Key（`sk-fb-…`）的稳定密钥；设置固定值可让 key 跨重新部署保持有效 |
 | `API_KEYS`    | 否   | 客户端 key；**托管应用默认 `sk-freebuff2api-2026`**                       |
+| `SITE_ACCESS_TOKEN`| 否 | 网页控制台门禁：访客须输入该 token（或带 `?token=…` 访问）才能解锁页面；未设置 = 控制台开放 |
 
 配置表中的其它变量（`UPSTREAM_BASE_URL`、`REQUEST_TIMEOUT` …）在托管环境
 中同样生效。
@@ -412,6 +493,10 @@ curl https://open.freebuff.app/v1/chat/completions \
 - 托管环境会自动执行 `next build`；`build:web` 只产出构建结果，绝不会
   启动服务器。
 - `/` 是一个小型在线控制台（健康状态、模型列表、试聊）。
+- **站点门禁：** 设置 `SITE_ACCESS_TOKEN` 后，控制台显示锁屏，访客必须
+  输入 token（或通过 `https://…/?token=…` 打开）才能进入；浏览器会记住
+  该 token。未设置则控制台保持开放。门禁只是控制台的"前门"——`/v1`
+  接口仍由 `API_KEYS` 保护。
 - `AUTH_TOKENS` 未配置前 `/healthz` 返回 `200 {ok:false, configured:false}`，
   让托管健康检查保持绿色，同时代理等待配置。
 - `/v1/*` 开放 CORS，浏览器客户端可直接调用。

@@ -13,6 +13,10 @@ process of freebuff2api, including:
 - Configuration and usage
 
 > 🇨🇳 中文版文档见 [`../zh/README.md`](../zh/README.md)。
+>
+> 🚀 **Usage-first**: the root [`README.md`](../../README.md) leads with the
+> project purpose (**What it is**) and **Quick start** (hosted web console +
+> standalone CLI) before the deep-dive sections below.
 
 ## Index
 
