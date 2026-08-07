@@ -55,6 +55,15 @@ These are the same variables documented in
 [07 – Configuration & Usage](07-configuration-and-usage.md); the hosted app
 reads them from the deployment environment.
 
+> ⚠️ **`AUTH_TOKENS` vs `API_KEYS`** — these are different credentials.
+> `AUTH_TOKENS` is your **freebuff.com account token** (the token your
+> freebuff.com account uses; get it with `freebuff2api login`, or from your
+> browser session on freebuff.com). `API_KEYS` is the key **your clients**
+> send as `Authorization: Bearer` (defaults to `sk-freebuff2api-2026`).
+> Setting `AUTH_TOKENS` to the proxy API key makes the upstream API answer
+> `401 Invalid API key` on `/v1/chat/completions` — the proxy stays healthy
+> but cannot admit a session with that token.
+
 ## Deploying
 
 1. Push the repo (Freebuff hosting builds from the connected repository).

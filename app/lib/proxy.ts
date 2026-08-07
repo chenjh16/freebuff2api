@@ -108,7 +108,7 @@ export function unconfiguredHandler(message: string): (request: Request) => Prom
           ok: false,
           configured: false,
           error: message,
-          hint: "Set AUTH_TOKENS in the deployment environment, then redeploy.",
+          hint: "Set AUTH_TOKENS (your freebuff.com account token — get it with `freebuff2api login`; this is NOT the proxy API key) in the deployment environment, then redeploy.",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
