@@ -3,6 +3,26 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **托管部署（Next.js App Router）**：新增 `app/` 路由处理器
+  （`/healthz`、`/v1/models`、`/v1/chat/completions`）与在线控制台首页，
+  通过 `src/handler.ts` 与 CLI 服务器共享完全相同的请求处理路径；
+  `bun run build:web`（`next build`）直接产出可部署产物
+- 托管默认代理 key：`API_KEYS` 未配置时默认 `sk-freebuff2api-2026`
+  （环境变量可覆盖），公开端点不会裸奔
+- `/v1/*` 开放 CORS（预检 204），浏览器客户端可直接调用
+- `AUTH_TOKENS` 未配置时 `/healthz` 保持 `200 {ok:false, configured:false}`
+  以维持托管健康检查，其余端点返回明确的 503 配置错误
+- `/healthz` 恒为公开端点（不受代理 key 鉴权），托管健康检查与状态探测
+  始终可用；只有 `/v1/*` 才要求 `Authorization`/`x-api-key`
+- 单元测试 `tests/unit/web-proxy.test.ts`：默认 key 解析、CORS 预检、
+  未配置 handler 行为
+- 文档：docs 08 托管部署指南（中英）、README 托管部署章节；
+  `dev` 脚本改为 Next.js 应用（`dev:cli` 运行独立代理）
+
 ## [0.1.1] - 2026-08-07
 
 ### Fixed

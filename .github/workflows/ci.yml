@@ -26,6 +26,9 @@ jobs:
       - name: Unit tests
         run: bun test tests/unit
 
+      - name: Web build (Next.js App Router)
+        run: bun run build:web
+
       - name: Build
         run: bun run build
 

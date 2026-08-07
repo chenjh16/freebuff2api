@@ -3,8 +3,14 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2023", "DOM"],
-    "types": ["bun"],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "types": [
+      "bun",
+      "node"
+    ],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -12,8 +18,27 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "verbatimModuleSyntax": true,
+    "jsx": "preserve",
     "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedParameters": false,
+    "allowJs": true,
+    "incremental": true,
+    "resolveJsonModule": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
-  "include": ["src", "tests/unit", "tests/e2e"]
+  "include": [
+    "app",
+    "next-env.d.ts",
+    "src",
+    "tests/e2e",
+    "tests/unit",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

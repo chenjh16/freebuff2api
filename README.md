@@ -30,9 +30,12 @@ Code, Cline, LobeChat, curl, …) can drive Freebuff's free models.
 > Chinese: [`docs/zh/`](docs/zh/README.md). Debugging & analysis tools in
 > [`tools/`](tools/README.md).
 
-Zero runtime dependencies. Written in TypeScript for [Bun](https://bun.sh)
-(also runs on Node 22+ with `node --experimental-strip-types` or after
-`bun run build`).
+Zero runtime dependencies for the core proxy. Written in TypeScript for
+[Bun](https://bun.sh) (also runs on Node 22+ with
+`node --experimental-strip-types` or after `bun run build`). The hosted
+deployment adds a Next.js App Router app (`app/`) that mounts the same proxy
+handler on a public URL — no VPS needed (see
+[Hosted deployment](#hosted-deployment-freebuff)).
 
 > This project was implemented against the live Freebuff backend protocol
 > (verified against the official
@@ -80,7 +83,8 @@ bun run login
 # Option B: provide a token directly
 # export AUTH_TOKENS="<your freebuff.com token>"
 
-bun run dev        # or: bun run src/index.ts
+bun run dev:cli    # standalone proxy server (was `bun run dev` in older versions)
+bun run dev        # Next.js web app: same /v1 API + live console (hosted-deploy shape)
 ```
 
 ```bash
@@ -153,12 +157,59 @@ Models are kept in sync with the official client by fetching
 `CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
 keeps the proxy working if the fetch fails.
 
+## Hosted deployment (Freebuff)
+
+The repository also ships a Next.js App Router app (`app/`) that mounts the
+exact same proxy handler behind `/v1`, so the project can be deployed to
+Freebuff hosting without a VPS:
+
+- **Domain:** `https://freebuff2api.freebuff.app`
+- **Base URL:** `https://freebuff2api.freebuff.app/v1`
+- **Endpoints:** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions`
+- **Auth:** `Authorization: Bearer <API_KEYS entry>` (or `x-api-key`)
+
+Deployment environment:
+
+| Var           | Required | Meaning                                                                 |
+| ------------- | -------- | ----------------------------------------------------------------------- |
+| `AUTH_TOKENS` | ✅       | Freebuff auth token(s); the proxy answers 503 until this is set         |
+| `API_KEYS`    | no       | Client keys; **defaults to `sk-freebuff2api-2026`** on the hosted app    |
+
+Every other variable from the configuration table above
+(`UPSTREAM_BASE_URL`, `REQUEST_TIMEOUT`, …) works the same in the hosted app.
+
+```bash
+# after the first deploy (Deploy button), later redeploys are one command
+freebuff-deploy start
+
+# point any OpenAI-compatible client at the public URL
+curl https://freebuff2api.freebuff.app/v1/chat/completions \
+  -H "Authorization: Bearer sk-freebuff2api-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+Notes:
+
+- Hosting runs `next build` automatically; `build:web` only produces the
+  build output and never starts a server.
+- `/` serves a small live console (health, model list, try-a-chat).
+- `/healthz` answers `200 {ok:false, configured:false}` until `AUTH_TOKENS`
+  is set, so hosting health probes stay green while the proxy waits for config.
+- CORS is open on `/v1/*` so browser clients can call the endpoint directly.
+- The Freebuff account limit still applies: one session (1 hour) per account,
+  locked to a single model. The proxy returns `409 model_locked` with the
+  locked model name instead of masking it as a 503.
+
+Full guide: [`docs/en/08-hosted-deployment.md`](docs/en/08-hosted-deployment.md).
+
 ## Development
 
 ```bash
 bun run typecheck   # tsc -b --noEmit
 bun run build       # bundles to dist/index.js (node target; bin: freebuff2api)
-bun run start       # run the built bundle
+bun run build:web   # next build — hosted deployment artifact
+bun run start       # run the built CLI bundle
 bun run login       # device-code login (see above)
 bun run check       # typecheck + build
 ```
@@ -209,8 +260,10 @@ OpenAI 兼容客户端（Claude Code、Cline、LobeChat、curl…）都能驱动
 > 逆向分析、免费模式网关破解过程、端到端测试记录。调试与分析工具见
 > [`tools/`](tools/README.md)。
 
-零运行时依赖。TypeScript 编写，面向 [Bun](https://bun.sh)（也可在
+核心代理零运行时依赖。TypeScript 编写，面向 [Bun](https://bun.sh)（也可在
 Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build` 后运行）。
+托管部署额外内置一个 Next.js App Router 应用（`app/`），把同一代理挂到
+公网域名上——无需 VPS（见[托管部署](#托管部署freebuff)）。
 
 > 本项目基于对线上 Freebuff 后端协议的实际逆向实现（已对照官方
 > [`CodebuffAI/freebuff`](https://github.com/CodebuffAI/freebuff) 客户端源码
@@ -250,7 +303,8 @@ bun run login
 # 方式 B：直接提供 token
 # export AUTH_TOKENS="<你的 freebuff.com token>"
 
-bun run dev        # 或：bun run src/index.ts
+bun run dev:cli    # 独立代理服务器（旧版本为 `bun run dev`）
+bun run dev        # Next.js Web 应用：同一套 /v1 API + 在线控制台（托管部署形态）
 ```
 
 ```bash
@@ -320,12 +374,58 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 模型列表与官方客户端保持同步：每 6 小时抓取 `CodebuffAI/freebuff` 的
 `free-agents.ts`；抓取失败时使用内置兜底映射，保证代理可用。
 
+## 托管部署（Freebuff）
+
+仓库同时内置一个 Next.js App Router 应用（`app/`），把完全相同的代理
+handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
+
+- **域名：** `https://freebuff2api.freebuff.app`
+- **Base URL：** `https://freebuff2api.freebuff.app/v1`
+- **端点：** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions`
+- **鉴权：** `Authorization: Bearer <API_KEYS 中的某个 key>`（或 `x-api-key`）
+
+部署环境变量：
+
+| 变量           | 必需 | 说明                                                                    |
+| ------------- | ---- | ----------------------------------------------------------------------- |
+| `AUTH_TOKENS` | ✅   | Freebuff auth token；未设置前代理返回 503                                |
+| `API_KEYS`    | 否   | 客户端 key；**托管应用默认 `sk-freebuff2api-2026`**                       |
+
+配置表中的其它变量（`UPSTREAM_BASE_URL`、`REQUEST_TIMEOUT` …）在托管环境
+中同样生效。
+
+```bash
+# 首次部署在 Deploy 面板完成；之后可用一条命令重新部署
+freebuff-deploy start
+
+# 把任何 OpenAI 兼容客户端指向公开地址
+curl https://freebuff2api.freebuff.app/v1/chat/completions \
+  -H "Authorization: Bearer sk-freebuff2api-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+注意事项：
+
+- 托管环境会自动执行 `next build`；`build:web` 只产出构建结果，绝不会
+  启动服务器。
+- `/` 是一个小型在线控制台（健康状态、模型列表、试聊）。
+- `AUTH_TOKENS` 未配置前 `/healthz` 返回 `200 {ok:false, configured:false}`，
+  让托管健康检查保持绿色，同时代理等待配置。
+- `/v1/*` 开放 CORS，浏览器客户端可直接调用。
+- Freebuff 账号限制仍然适用：每个账号同一时间只有一个会话（1 小时）且
+  锁定单一模型；代理返回 `409 model_locked` 并附上锁定模型名，而不是
+  把它掩盖成 503。
+
+完整指南见 [`docs/zh/08-托管部署.md`](docs/zh/08-托管部署.md)。
+
 ## 开发
 
 ```bash
 bun run typecheck   # tsc -b --noEmit
 bun run build       # 打包到 dist/index.js（node 目标；bin: freebuff2api）
-bun run start       # 运行打包产物
+bun run build:web   # next build —— 托管部署产物
+bun run start       # 运行打包产物（CLI 服务器）
 bun run login       # 设备码登录（见上文）
 bun run check       # typecheck + build
 ```

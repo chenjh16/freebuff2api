@@ -3,6 +3,7 @@
  * freebuff2api — OpenAI-compatible reverse proxy for the Freebuff coding API.
  */
 
+import { pathToFileURL } from "node:url";
 import { loadConfig, type LoadConfigOptions } from "./config.ts";
 import { ModelRegistry } from "./models.ts";
 import { RunManager } from "./runs.ts";
@@ -213,4 +214,20 @@ export function portFromAddr(addr: string): number {
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 23333;
 }
 
-if (import.meta.main) void main();
+/**
+ * Entry guard that works under every supported runtime: Bun (source or
+ * bundle), Node ESM (`node dist/index.js`), and Node's type stripping.
+ * Unlike `import.meta.main` (Bun-only), it also survives `bun build
+ * --target=node`, which rewrites import.meta.main into a CJS-only helper.
+ */
+function isEntrypoint(): boolean {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+  try {
+    return import.meta.url === pathToFileURL(argv1).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) void main();

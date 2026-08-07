@@ -4,6 +4,9 @@ node_modules/
 # Build output (rebuilt in CI / on release)
 dist/
 
+# Next.js build output
+.next/
+
 # TypeScript
 tsconfig.tsbuildinfo
 *.tsbuildinfo

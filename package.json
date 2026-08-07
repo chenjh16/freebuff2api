@@ -31,6 +31,7 @@
   },
   "files": [
     "dist/",
+    "app/",
     "src/",
     "docs/",
     "tools/",
@@ -42,10 +43,14 @@
     "bun": ">=1.0"
   },
   "scripts": {
-    "dev": "bun --watch src/index.ts",
+    "dev": "next dev",
+    "dev:cli": "bun --watch src/index.ts",
+    "dev:web": "next dev",
     "start": "bun run src/index.ts",
+    "start:web": "next start",
     "login": "bun run src/index.ts login",
-    "build": "bun build ./src/index.ts --target=node --outfile=dist/index.js",
+    "build": "bun build ./src/index.ts --target=node --format=esm --outfile=dist/index.js",
+    "build:web": "next build",
     "typecheck": "tsc -b --noEmit",
     "check": "tsc -b --noEmit && bun run build",
     "test": "bun test tests/unit",
@@ -55,8 +60,16 @@
     "test:agentic": "node tests/agentic/run.mjs",
     "test:all": "bun run test:unit && bun run test:e2e"
   },
+  "dependencies": {
+    "next": "^15.5.23",
+    "react": "^19.1.9",
+    "react-dom": "^19.1.9"
+  },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
     "typescript": "^5.6.0"
   }
 }

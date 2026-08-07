@@ -471,4 +471,16 @@ describe("proxy API key auth", () => {
     const resp = await fetch(`${base}/v1/models`, { headers: { Authorization: "Bearer nope" } });
     expect(resp.status).toBe(401);
   });
+
+  test("keeps /healthz public even when a proxy key is configured", async () => {
+    const resp = await fetch(`${base}/healthz`);
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+  });
+
+  test("still requires the key for /v1/chat/completions", async () => {
+    const resp = await chatPost(base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+    expect(resp.status).toBe(401);
+  });
 });

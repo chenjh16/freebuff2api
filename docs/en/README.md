@@ -25,6 +25,7 @@ process of freebuff2api, including:
 | [05 - Models & Agents](05-models-and-agents.md) | Model registry, agent hierarchy, sync mechanism |
 | [06 - E2E Test Records](06-e2e-test-records.md) | Test results and verification conclusions per stage |
 | [07 - Configuration & Usage](07-configuration-and-usage.md) | Env vars, config files, common commands |
+| [08 - Hosted Deployment](08-hosted-deployment.md) | Freebuff hosting: the Next.js app, deploy env vars, endpoint auth |
 
 ## Tools
 
@@ -47,6 +48,9 @@ The helper scripts used during reverse-engineering and verification live in
 - ✅ 82 unit tests pass (`bun test tests/unit`) covering config, models, runs,
   session admission (409/503/429 classification), and the server surface
 - ✅ Real-account login (device-code flow)
+- ✅ Hosted deployment shape: `bun run build:web` (Next.js) builds the app
+  that Freebuff hosting deploys to `freebuff2api.freebuff.app` — see
+  [08 - Hosted Deployment](08-hosted-deployment.md)
 - ✅ End-to-end tests: streaming and non-streaming chat both return 200 with
   real answers
 - ✅ Dual-model re-verification (`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`)
