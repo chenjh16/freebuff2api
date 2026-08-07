@@ -2,7 +2,7 @@
  * Opt-in model availability test.
  *
  * Run with LIVE_MODEL_TEST=1 and a running proxy:
- *   LIVE_MODEL_TEST=1 bun test tests/e2e/model-availability.test.ts --timeout 180000
+ *   LIVE_MODEL_TEST=1 bun test ./tests/e2e/model-availability.test.ts --timeout 180000
  *
  * This is intentionally opt-in because each model probe consumes upstream quota.
  */

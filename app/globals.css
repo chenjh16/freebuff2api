@@ -43,24 +43,17 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 12px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-dim);
 }
 
-.boot-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 800;
-  color: #eaf2ff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-bright));
-  box-shadow: 0 0 26px rgba(79, 141, 255, 0.4);
+.boot-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: block;
 }
 
 .boot-text {
@@ -110,29 +103,81 @@ header.nav {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  font-size: 17px;
+  gap: 10px;
+  text-decoration: none;
+  opacity: 0.72;
+  transition: opacity 0.2s ease;
 }
 
-.brand .mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  display: grid;
-  place-items: center;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 800;
-  color: #eaf2ff;
-  background: linear-gradient(135deg, var(--accent), var(--accent-bright));
-  box-shadow: 0 0 20px rgba(79, 141, 255, 0.35);
+.brand:hover {
+  opacity: 1;
+}
+
+.brand-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: block;
+  flex-shrink: 0;
+}
+
+.brand-text {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: rgba(230, 237, 247, 0.85);
+  font-weight: 400;
+  transition: color 0.2s ease;
+}
+
+.brand:hover .brand-text {
+  color: #fff;
 }
 
 .nav-right {
   display: flex;
   align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.gh-btn:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text);
+}
+
+.gh-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.gh-star {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.gh-stars {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
 .endpoint-badge {
@@ -146,7 +191,7 @@ header.nav {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  max-width: 320px;
+  max-width: min(320px, 40vw);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -680,6 +725,24 @@ footer.site {
   gap: 16px;
   justify-content: space-between;
   align-items: center;
+}
+
+/* ---------- responsive header ---------- */
+
+@media (max-width: 640px) {
+  header.nav {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .nav-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .endpoint-badge {
+    max-width: 46vw;
+  }
 }
 
 /* ---------- toast ---------- */

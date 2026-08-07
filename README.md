@@ -163,8 +163,8 @@ The repository also ships a Next.js App Router app (`app/`) that mounts the
 exact same proxy handler behind `/v1`, so the project can be deployed to
 Freebuff hosting without a VPS:
 
-- **Domain:** `https://freebuff2api.freebuff.app`
-- **Base URL:** `https://freebuff2api.freebuff.app/v1`
+- **Domain:** `https://open.freebuff.app`
+- **Base URL:** `https://open.freebuff.app/v1`
 - **Endpoints:** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions`
 - **Auth:** `Authorization: Bearer <API_KEYS entry>` (or `x-api-key`)
 
@@ -173,6 +173,7 @@ Deployment environment:
 | Var           | Required | Meaning                                                                 |
 | ------------- | -------- | ----------------------------------------------------------------------- |
 | `AUTH_TOKENS` | ✅       | Freebuff auth token(s); the proxy answers 503 until this is set         |
+| `PROXY_SECRET`| no       | Stable secret that encrypts web-login API keys (`sk-fb-…`); set a fixed value so keys survive redeploys |
 | `API_KEYS`    | no       | Client keys; **defaults to `sk-freebuff2api-2026`** on the hosted app    |
 
 Every other variable from the configuration table above
@@ -183,7 +184,7 @@ Every other variable from the configuration table above
 freebuff-deploy start
 
 # point any OpenAI-compatible client at the public URL
-curl https://freebuff2api.freebuff.app/v1/chat/completions \
+curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer sk-freebuff2api-2026" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
@@ -379,8 +380,8 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 仓库同时内置一个 Next.js App Router 应用（`app/`），把完全相同的代理
 handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 
-- **域名：** `https://freebuff2api.freebuff.app`
-- **Base URL：** `https://freebuff2api.freebuff.app/v1`
+- **域名：** `https://open.freebuff.app`
+- **Base URL：** `https://open.freebuff.app/v1`
 - **端点：** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions`
 - **鉴权：** `Authorization: Bearer <API_KEYS 中的某个 key>`（或 `x-api-key`）
 
@@ -389,6 +390,7 @@ handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 | 变量           | 必需 | 说明                                                                    |
 | ------------- | ---- | ----------------------------------------------------------------------- |
 | `AUTH_TOKENS` | ✅   | Freebuff auth token；未设置前代理返回 503                                |
+| `PROXY_SECRET`| 否   | 加密网页登录 API Key（`sk-fb-…`）的稳定密钥；设置固定值可让 key 跨重新部署保持有效 |
 | `API_KEYS`    | 否   | 客户端 key；**托管应用默认 `sk-freebuff2api-2026`**                       |
 
 配置表中的其它变量（`UPSTREAM_BASE_URL`、`REQUEST_TIMEOUT` …）在托管环境
@@ -399,7 +401,7 @@ handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 freebuff-deploy start
 
 # 把任何 OpenAI 兼容客户端指向公开地址
-curl https://freebuff2api.freebuff.app/v1/chat/completions \
+curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer sk-freebuff2api-2026" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'

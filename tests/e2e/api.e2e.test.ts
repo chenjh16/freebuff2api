@@ -9,7 +9,7 @@
  *   - POST /v1/chat/completions  工具调用（tool_calls 两轮往返）
  *
  * 需要真实登录凭证（~/.config/freebuff2api/credentials.json）；缺失时自动跳过。
- * 运行：bun test tests/e2e --timeout 120000   （会消耗免费账号额度）
+ * 运行：bun test ./tests/e2e/ --timeout 120000   （会消耗免费账号额度）
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";

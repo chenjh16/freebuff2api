@@ -49,7 +49,7 @@ The helper scripts used during reverse-engineering and verification live in
   session admission (409/503/429 classification), and the server surface
 - ✅ Real-account login (device-code flow)
 - ✅ Hosted deployment shape: `bun run build:web` (Next.js) builds the app
-  that Freebuff hosting deploys to `freebuff2api.freebuff.app` — see
+  that Freebuff hosting deploys to `open.freebuff.app` — see
   [08 - Hosted Deployment](08-hosted-deployment.md)
 - ✅ End-to-end tests: streaming and non-streaming chat both return 200 with
   real answers

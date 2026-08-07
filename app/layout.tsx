@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "freebuff2api — OpenAI-compatible Freebuff API",
   description:
     "OpenAI-compatible reverse proxy for the Freebuff coding API. One endpoint, free models, streaming support.",
-  metadataBase: new URL("https://freebuff2api.freebuff.app"),
+  metadataBase: new URL("https://open.freebuff.app"),
   openGraph: {
     title: "freebuff2api",
     description: "OpenAI-compatible reverse proxy for the Freebuff coding API.",

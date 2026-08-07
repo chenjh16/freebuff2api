@@ -45,7 +45,7 @@
   run 管理、会话准入（409/503/429 分类）与服务器接口
 - ✅ 真实账号登录（device-code 流程）
 - ✅ 托管部署形态：`bun run build:web`（Next.js）可构建出 Freebuff 托管
-  部署到 `freebuff2api.freebuff.app` 的应用——见
+  部署到 `open.freebuff.app` 的应用——见
   [08-托管部署](08-托管部署.md)
 - ✅ 端到端测试：流式 + 非流式 chat 均返回 200 与真实回复
 - ✅ 双模型复测（`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`）：

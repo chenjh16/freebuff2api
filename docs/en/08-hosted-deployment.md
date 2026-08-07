@@ -26,8 +26,8 @@ CLI-gate system-marker injection).
 
 ## Public surface
 
-- **Domain:** `https://freebuff2api.freebuff.app`
-- **Base URL:** `https://freebuff2api.freebuff.app/v1`
+- **Domain:** `https://open.freebuff.app`
+- **Base URL:** `https://open.freebuff.app/v1`
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
@@ -48,6 +48,7 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | Var | Required | Default | Meaning |
 | --- | -------- | ------- | ------- |
 | `AUTH_TOKENS` | ✅ | — | Freebuff auth token(s), comma-separated. Until set, the proxy answers `503` with a clear message. |
+| `PROXY_SECRET` | no | auto | Stable secret that encrypts web-login API keys (`sk-fb-…`). Set a fixed value so keys survive redeploys. |
 | `API_KEYS` | no | `sk-freebuff2api-2026` | Keys clients must present. The hosted app falls back to this default so the public endpoint is never left open; set the env var to override. |
 | `UPSTREAM_BASE_URL` | no | `https://www.codebuff.com` | Freebuff backend base URL. |
 | `REQUEST_TIMEOUT` | no | `15m` | Upstream request timeout. |
@@ -79,8 +80,10 @@ itself — the flow mirrors `freebuff2api login`:
 So `AUTH_TOKENS` is **optional** in hosted mode: it only feeds the shared
 pool used by the default `API_KEYS`. The key-encryption secret is derived
 from `PROXY_SECRET` (recommended — set a fixed value so web-login keys
-survive redeploys), else from a hash of `AUTH_TOKENS`, else a per-process
-random (keys then reset on redeploy).
+survive redeploys), else from a hash of `AUTH_TOKENS`, else a secret
+persisted to a local file (`.data/proxy-secret`, so keys survive process
+restarts even without env vars), else a per-process random (keys then reset
+on restart).
 
 > ⚠️ **`AUTH_TOKENS` vs `API_KEYS`** — these are different credentials.
 > `AUTH_TOKENS` is your **freebuff.com account token** (the token your
@@ -106,14 +109,14 @@ random (keys then reset on redeploy).
 
 ```bash
 # health (public)
-curl https://freebuff2api.freebuff.app/healthz
+curl https://open.freebuff.app/healthz
 
 # models (authenticated)
-curl https://freebuff2api.freebuff.app/v1/models \
+curl https://open.freebuff.app/v1/models \
   -H "Authorization: Bearer sk-freebuff2api-2026"
 
 # chat (streaming)
-curl https://freebuff2api.freebuff.app/v1/chat/completions \
+curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer sk-freebuff2api-2026" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
@@ -145,5 +148,16 @@ curl https://freebuff2api.freebuff.app/v1/chat/completions \
 bun run dev        # next dev — same /v1 surface + landing console
 bun run build:web  # next build — the artifact hosting builds
 ```
+
+**Preview command (Freebuff Cloud agent):** set the dev/preview command to
+
+```bash
+bun run dev -- -H 0.0.0.0
+```
+
+This runs the Next.js dev server bound to all interfaces so the cloud preview
+can reach it. Freebuff-injected `PORT` overrides the port automatically (do
+not pass `-p`, and do not use bare `-` arguments — `next dev` would treat
+them as a project directory and fail).
 
 The CLI server is unchanged: `bun run dev:cli` (or `bun run start`).

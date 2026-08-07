@@ -9,11 +9,25 @@
  * OpenAI-compatible clients only ever need the API key.
  *
  * Stateless by design: keys survive server restarts / instance rotation as
- * long as the secret is stable. Derive the secret from PROXY_SECRET, else
- * from AUTH_TOKENS, else a per-process random (keys then reset on restart).
+ * long as the secret is stable. Secret precedence:
+ *
+ *   1. `PROXY_SECRET` env  — set it on the hosted deployment so every
+ *      instance and every redeploy shares the same secret.
+ *   2. `AUTH_TOKENS` env    — stable while the token list does not change.
+ *   3. persisted file       — generated once and stored at `PROXY_SECRET_FILE`
+ *      (default `<cwd>/.data/proxy-secret`); reused across process restarts
+ *      on the same filesystem, so keys survive restarts without any env var.
+ *   4. per-process random   — last resort only; keys then reset on restart.
+ *
+ * Fixes `invalid proxy api key` (401 authentication_error) that appeared when
+ * a key minted by /api/auth/register could not be decrypted by a different
+ * process (serverless instance, preview, restart) because the fallback secret
+ * was `ephemeral:${pid}:${Date.now()}`.
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export const API_KEY_PREFIX = "sk-fb-";
 
@@ -22,11 +36,42 @@ const REVOKED = new Set<string>();
 /** token → minted key, so re-registering the same account returns the same key. */
 const KEY_BY_TOKEN = new Map<string, string>();
 
+/** Where the fallback secret is persisted when no env secret is configured. */
+function persistedSecretPath(): string {
+  const file = process.env.PROXY_SECRET_FILE?.trim();
+  if (file) return file;
+  return join(process.cwd(), ".data", "proxy-secret");
+}
+
+/**
+ * Read the persisted secret, or generate and persist one. Returns a 32-byte
+ * derived key, or null when the filesystem is unavailable (read-only
+ * serverless filesystems without PROXY_SECRET — callers fall back to a
+ * per-process random secret in that case).
+ */
+function loadOrCreatePersistedSecret(): Buffer | null {
+  try {
+    const path = persistedSecretPath();
+    if (existsSync(path)) {
+      const raw = readFileSync(path);
+      if (raw.length >= 16) return createHash("sha256").update(`freebuff2api:file:${raw.toString("hex")}`).digest();
+    }
+    const raw = randomBytes(32);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, raw, { mode: 0o600 });
+    return createHash("sha256").update(`freebuff2api:file:${raw.toString("hex")}`).digest();
+  } catch {
+    return null;
+  }
+}
+
 function deriveSecret(): Buffer {
   const fromEnv = process.env.PROXY_SECRET?.trim();
   if (fromEnv && fromEnv.length >= 16) return createHash("sha256").update(`freebuff2api:${fromEnv}`).digest();
   const fromTokens = process.env.AUTH_TOKENS?.trim();
   if (fromTokens) return createHash("sha256").update(`freebuff2api:tokens:${fromTokens}`).digest();
+  const fromFile = loadOrCreatePersistedSecret();
+  if (fromFile) return fromFile;
   return createHash("sha256").update(`freebuff2api:ephemeral:${process.pid}:${Date.now()}`).digest();
 }
 

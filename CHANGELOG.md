@@ -7,10 +7,29 @@
 
 ### Fixed
 
+- **网页登录 API Key 跨进程/重启失效（`invalid proxy api key` 401）**：
+  `sk-fb-*` key 的 AES 密钥原本在 `PROXY_SECRET`/`AUTH_TOKENS` 均未设置时
+  退化为每进程随机（`ephemeral:${pid}:${Date.now()}`），导致在服务器实例
+  轮换、预览与生产之间、或进程重启后 key 无法解密。现在密钥派生优先级为
+  `PROXY_SECRET` 环境变量 → `AUTH_TOKENS` 哈希 → 本地持久化文件
+  （`.data/proxy-secret`，首次生成后复用，无环境变量时 key 也能跨进程重启
+  保持有效）→ 进程随机（最后兜底）
 - 修复托管构建失败（`Next.js output directory .next was not found`）：
   `build` 脚本改为标准的 `next build`（托管框架默认构建命令），CLI 打包
   移至 `build:cli`（并加 `prepublishOnly`，npm 发布仍自动产出
   `dist/index.js`）
+- 预览命令文档修正：`bun run dev - - -p 3000 -H 0.0.0.0` 中的裸 `-` 会被
+  `next dev` 当作项目目录并报错，正确写法为 `bun run dev -- -H 0.0.0.0`
+
+### Changed
+
+- 主页头部 UI 对齐 freebuff.com：左上角改为官方 logo
+  （`public/logo-icon.png`）+ 衬线 `freebuff` 字标（链接到 freebuff.com）；
+  右上角端点徽标自适应当前部署域名（`window.location.host`）；新增 GitHub
+  仓库链接按钮（octocat + Star 计数，风格与 freebuff.com 头部一致，链接到
+  github.com/chenjh16/freebuff2api）；引导页/加载页同步更新
+- 文档域名更新为线上真实域名 `open.freebuff.app`（README 中英文、docs 08
+  托管部署指南），并补充 `PROXY_SECRET` 部署环境变量说明
 
 ### Added
 

@@ -1,4 +1,7 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   API_KEY_PREFIX,
@@ -10,6 +13,13 @@ import {
 
 beforeAll(() => {
   process.env.PROXY_SECRET = "unit-test-secret-0123456789abcdef";
+  resetAccountStateForTests();
+});
+
+afterAll(() => {
+  delete process.env.PROXY_SECRET;
+  delete process.env.AUTH_TOKENS;
+  delete process.env.PROXY_SECRET_FILE;
   resetAccountStateForTests();
 });
 
@@ -52,5 +62,51 @@ describe("account API keys (sk-fb-*)", () => {
     const next = generateApiKey("again");
     expect(next).not.toBe(key);
     expect(resolveApiKeyToken(next)).toBe("again");
+  });
+});
+
+describe("secret stability across processes/restarts", () => {
+  test("PROXY_SECRET env keeps a key resolvable after a simulated restart", () => {
+    // PROXY_SECRET is set in beforeAll. Mint, then drop the cached secret and
+    // key map (as a fresh process would), then resolve: still works.
+    const key = generateApiKey("restart-token");
+    resetAccountStateForTests();
+    expect(resolveApiKeyToken(key)).toBe("restart-token");
+  });
+
+  test("persisted secret file keeps a key resolvable without env secrets", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fb2api-test-"));
+    const secretFile = join(dir, "secret");
+    delete process.env.PROXY_SECRET;
+    delete process.env.AUTH_TOKENS;
+    process.env.PROXY_SECRET_FILE = secretFile;
+    try {
+      resetAccountStateForTests();
+      const key = generateApiKey("file-token");
+      // Simulate a fresh process: cached secret + key map are dropped, but the
+      // persisted file is re-read, so the key must still decrypt.
+      resetAccountStateForTests();
+      expect(resolveApiKeyToken(key)).toBe("file-token");
+    } finally {
+      delete process.env.PROXY_SECRET_FILE;
+      process.env.PROXY_SECRET = "unit-test-secret-0123456789abcdef";
+      rmSync(dir, { recursive: true, force: true });
+      resetAccountStateForTests();
+    }
+  });
+
+  test("AUTH_TOKENS env also stabilizes the secret", () => {
+    delete process.env.PROXY_SECRET;
+    process.env.AUTH_TOKENS = "token-a,token-b";
+    try {
+      resetAccountStateForTests();
+      const key = generateApiKey("tokens-token");
+      resetAccountStateForTests();
+      expect(resolveApiKeyToken(key)).toBe("tokens-token");
+    } finally {
+      delete process.env.AUTH_TOKENS;
+      process.env.PROXY_SECRET = "unit-test-secret-0123456789abcdef";
+      resetAccountStateForTests();
+    }
   });
 });

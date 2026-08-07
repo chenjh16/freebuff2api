@@ -16,6 +16,6 @@ and **English** with semantically identical content, under the `zh/` and
 - **English version**: `en/` directory (README + 01~08, including the core
   free-tier CLI gate analysis)
 - 08 托管部署 / Hosted deployment：将本项目部署到 Freebuff 托管
-  （`freebuff2api.freebuff.app`）的完整指南
+  （`open.freebuff.app`）的完整指南
 - 调试与分析工具见 [`tools/`](../tools/README.md)（中文使用说明） /
   Debugging & analysis tools live in [`tools/`](../tools/README.md)

@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Repository linked from the header (mirrors freebuff.com's header style). */
+const GITHUB_URL = "https://github.com/chenjh16/freebuff2api";
+const GITHUB_API_URL = "https://api.github.com/repos/chenjh16/freebuff2api";
+
+// ---------------------------------------------------------------------------
 // Types & storage
 // ---------------------------------------------------------------------------
 
@@ -123,7 +131,7 @@ export default function Home() {
     toastTimer.current = setTimeout(() => setToast(null), 2200);
   }, []);
 
-  const baseURL = typeof window !== "undefined" ? `${window.location.origin}/v1` : "https://freebuff2api.freebuff.app/v1";
+  const baseURL = typeof window !== "undefined" ? `${window.location.origin}/v1` : "https://open.freebuff.app/v1";
 
   const authHeaders = useCallback(
     (): Record<string, string> => (session ? { Authorization: `Bearer ${session.apiKey}` } : {}),
@@ -406,8 +414,8 @@ export default function Home() {
   if (booting) {
     return (
       <div className="boot">
-        <span className="boot-mark">fb</span>
-        <span className="boot-text">freebuff2api</span>
+        <img className="boot-logo" src="/logo-icon.png" alt="Freebuff" width="24" height="24" />
+        <span className="boot-text">freebuff</span>
       </div>
     );
   }
@@ -469,6 +477,72 @@ export default function Home() {
 }
 
 // ---------------------------------------------------------------------------
+// Site header (freebuff.com-style brand + adaptive host + GitHub link)
+// ---------------------------------------------------------------------------
+
+function useGitHubStars(): number | null {
+  const [stars, setStars] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(GITHUB_API_URL)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d && typeof d.stargazers_count === "number") setStars(d.stargazers_count);
+      })
+      .catch(() => {
+        // Star count is decorative; ignore failures.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return stars;
+}
+
+/** Current site host, e.g. `open.freebuff.app` or the preview URL. */
+function siteHost(): string {
+  return typeof window !== "undefined" ? window.location.host : "open.freebuff.app";
+}
+
+function SiteHeader({ right }: { right?: React.ReactNode }) {
+  const stars = useGitHubStars();
+  return (
+    <header className="nav">
+      <a className="brand" href="https://freebuff.com" target="_blank" rel="noopener noreferrer">
+        <img className="brand-logo" src="/logo-icon.png" alt="Freebuff" width="24" height="24" />
+        <span className="brand-text">freebuff</span>
+      </a>
+      <div className="nav-right">
+        <span className="endpoint-badge" title="API base host">
+          <span className="dot ok" />
+          {siteHost()}
+        </span>
+        <a
+          className="gh-btn"
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Star freebuff2api on GitHub"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="gh-icon">
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.523 2 12 2Z"
+            />
+          </svg>
+          <span className="gh-stars">{stars !== null ? stars.toLocaleString() : "Star"}</span>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="gh-star">
+            <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
+          </svg>
+        </a>
+        {right}
+      </div>
+    </header>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Login view
 // ---------------------------------------------------------------------------
 
@@ -486,16 +560,7 @@ function LoginView(props: {
 
   return (
     <div className="wrap">
-      <header className="nav">
-        <div className="brand">
-          <span className="mark">fb</span>
-          freebuff2api
-        </div>
-        <span className="endpoint-badge">
-          <span className="dot ok" />
-          freebuff2api.freebuff.app
-        </span>
-      </header>
+      <SiteHeader />
 
       <main className="login-main">
         <section className="hero">
@@ -608,18 +673,7 @@ function DashboardView(props: {
 
   return (
     <div className="wrap">
-      <header className="nav">
-        <div className="brand">
-          <span className="mark">fb</span>
-          freebuff2api
-        </div>
-        <div className="nav-right">
-          <span className="endpoint-badge">
-            <span className="dot ok" />
-            {session.user?.email ?? "account"}
-          </span>
-        </div>
-      </header>
+      <SiteHeader right={<span className="endpoint-badge">{session.user?.email ?? "account"}</span>} />
 
       <main className="dash-main">
         <section className="hero hero-small">

@@ -55,9 +55,9 @@
     "prepublishOnly": "bun run build:cli",
     "typecheck": "tsc -b --noEmit",
     "check": "tsc -b --noEmit && bun run build:cli",
-    "test": "bun test tests/unit",
-    "test:unit": "bun test tests/unit",
-    "test:e2e": "bun test tests/e2e",
+    "test": "bun test ./tests/unit/",
+    "test:unit": "bun test ./tests/unit/",
+    "test:e2e": "bun test ./tests/e2e/",
     "test:models": "node tools/model-availability.mjs",
     "test:agentic": "node tests/agentic/run.mjs",
     "test:all": "bun run test:unit && bun run test:e2e"

@@ -17,6 +17,9 @@ tsconfig.tsbuildinfo
 !.env.example
 config.json
 
+# Persisted proxy secret (generated at runtime when PROXY_SECRET is unset)
+.data/
+
 # Logs
 *.log
 
@@ -27,3 +30,6 @@ config.json
 
 # Scratch
 *.scratch.mjs
+
+# Stale nested repo copy (leftover experiment); would double-count tests if committed
+isolate/
