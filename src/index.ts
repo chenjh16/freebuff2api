@@ -1,19 +1,9 @@
 #!/usr/bin/env bun
 /**
  * freebuff2api — OpenAI-compatible reverse proxy for the Freebuff coding API.
- *
- * Usage:
- *   freebuff2api                start the proxy server
- *   freebuff2api login          device-code login (prints a URL to open in your browser)
- *   freebuff2api login --resume continue a previous interrupted login
- *   freebuff2api login --force  start a fresh login, ignoring saved credentials
- *   freebuff2api --help         show help
- *
- * Configuration: an auth token is required (see config.ts / config.example.json);
- * run "freebuff2api login" or set AUTH_TOKENS.
  */
 
-import { loadConfig } from "./config.ts";
+import { loadConfig, type LoadConfigOptions } from "./config.ts";
 import { ModelRegistry } from "./models.ts";
 import { RunManager } from "./runs.ts";
 import { Server } from "./server.ts";
@@ -21,74 +11,143 @@ import { TokenManager } from "./session.ts";
 import { UpstreamClient } from "./upstream.ts";
 import { LoginError, runLoginCommand } from "./login.ts";
 
+export interface CLIOptions extends LoadConfigOptions {
+  command: "serve" | "login";
+  force?: boolean;
+  resume?: boolean;
+}
+
 function log(message: string): void {
   console.log(`[freebuff2api] ${message}`);
 }
 
-function printUsage(): void {
+export function printUsage(): void {
   console.log(`freebuff2api — OpenAI-compatible reverse proxy for the Freebuff coding API
 
 Usage:
-  freebuff2api                start the proxy server
-  freebuff2api login          device-code login; prints a URL to open in your browser
-  freebuff2api login --resume continue a previous interrupted login
-  freebuff2api login --force  ignore saved credentials and start a fresh login
-  freebuff2api --help         show this help
+  freebuff2api [options]                 start the proxy server
+  freebuff2api login [--resume|--force]  device-code login
+  freebuff2api --help                    show this help
 
-Environment:
-  AUTH_TOKENS                 freebuff auth token(s), comma-separated
-                              (AUTH_TOKENS > config.json > saved login credentials)
-  UPSTREAM_BASE_URL           freebuff backend base URL (default https://www.codebuff.com)
-  LOGIN_BASE_URL              base URL used by "login" (default https://freebuff.com)
-  LISTEN_ADDR                 listen address (default :8080; PORT wins in managed workspaces)
-  REQUEST_TIMEOUT             upstream request timeout, e.g. 15m (default 15m)
-  ROTATION_INTERVAL           agent run rotation interval, e.g. 6h (default 6h)
-  API_KEYS                    optional keys clients must present to this proxy
-  HTTP_PROXY                  optional upstream HTTP(S) proxy`);
+Server options (CLI values override config.json and environment values):
+  --listen-addr <addr>       listen address (default :23333)
+  --port <port>              override only the listen port
+  --upstream <url>           Freebuff backend base URL
+  --login-base-url <url>     base URL used by login
+  --http-proxy <url>         upstream HTTP(S) proxy
+  --max-body-size <size>     maximum chat body, e.g. 16MB (default 16MB)
+  --max-concurrent <count>   maximum in-flight chats (default 32)
+  --config <path>            explicit config.json path
+
+Environment/configuration:
+  AUTH_TOKENS, UPSTREAM_BASE_URL, LOGIN_BASE_URL, LISTEN_ADDR, PORT
+  REQUEST_TIMEOUT, ROTATION_INTERVAL, API_KEYS, USER_AGENT
+  HTTP_PROXY                 proxy precedence: CLI > config.json > environment
+  MAX_BODY_SIZE              default 16MB
+  MAX_CONCURRENT_REQUESTS    default 32
+
+Examples:
+  freebuff2api --port 23333
+  freebuff2api --listen-addr 127.0.0.1:9000 --http-proxy http://127.0.0.1:7890
+  freebuff2api login --force
+`);
 }
 
-async function runLogin(args: string[]): Promise<void> {
-  const force = args.includes("--force");
-  const resume = args.includes("--resume");
+function requireValue(args: string[], index: number, option: string): string {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${option} requires a value`);
+  return value;
+}
+
+export function parseArgs(args: string[]): CLIOptions {
+  const options: CLIOptions = { command: "serve" };
+  if (args[0] === "login") {
+    options.command = "login";
+    args = args.slice(1);
+  }
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    switch (arg) {
+      case "--force": options.force = true; break;
+      case "--resume": options.resume = true; break;
+      case "--listen-addr": options.listenAddr = requireValue(args, i++, arg); break;
+      case "--port": options.port = requireValue(args, i++, arg); break;
+      case "--upstream": options.upstreamBaseURL = requireValue(args, i++, arg); break;
+      case "--login-base-url": options.loginBaseURL = requireValue(args, i++, arg); break;
+      case "--http-proxy": options.httpProxy = requireValue(args, i++, arg); break;
+      case "--max-body-size": options.maxBodySize = requireValue(args, i++, arg); break;
+      case "--max-concurrent": options.maxConcurrentRequests = requireValue(args, i++, arg); break;
+      case "--config": options.configPath = requireValue(args, i++, arg); break;
+      case "--help": case "-h": case "help": break;
+      default: throw new Error(`unknown option: ${arg}`);
+    }
+  }
+  return options;
+}
+
+function applyProxyConfig(proxy: string | null): void {
+  // Bun fetch reads these variables for both HTTP and HTTPS destinations.
+  // loadConfig has already applied CLI > config.json > environment precedence.
+  if (proxy) {
+    process.env.HTTP_PROXY = proxy;
+    process.env.HTTPS_PROXY = proxy;
+  }
+}
+
+async function runLogin(options: CLIOptions): Promise<void> {
   let cfg;
   try {
-    cfg = loadConfig({ requireToken: false });
+    cfg = loadConfig({ ...options, requireToken: false });
   } catch (error) {
     console.error(`[freebuff2api] configuration error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
+  applyProxyConfig(cfg.httpProxy);
   try {
     await runLoginCommand({
       baseURL: cfg.loginBaseURL,
-      force,
-      resume,
+      force: options.force,
+      resume: options.resume,
       log: (message) => console.log(message),
     });
   } catch (error) {
     console.error(error instanceof LoginError ? `[login] ${error.message}` : `[login] ${String(error)}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-
-  if (args.includes("--help") || args.includes("-h") || args.includes("help")) {
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes("--help") || rawArgs.includes("-h") || rawArgs[0] === "help") {
     printUsage();
     return;
   }
-  if (args[0] === "login") {
-    await runLogin(args.slice(1));
+
+  let options: CLIOptions;
+  try {
+    options = parseArgs(rawArgs);
+  } catch (error) {
+    console.error(`[freebuff2api] argument error: ${error instanceof Error ? error.message : String(error)}`);
+    printUsage();
+    process.exitCode = 2;
+    return;
+  }
+  if (options.command === "login") {
+    await runLogin(options);
     return;
   }
 
   let cfg;
   try {
-    cfg = loadConfig();
+    cfg = loadConfig(options);
   } catch (error) {
     console.error(`[freebuff2api] configuration error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
+  applyProxyConfig(cfg.httpProxy);
 
   const client = new UpstreamClient({
     baseURL: cfg.upstreamBaseURL,
@@ -99,19 +158,22 @@ async function main(): Promise<void> {
 
   const registry = new ModelRegistry(fetch, log);
   await registry.start();
-
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
   const server = new Server({ cfg, client, registry, tokens, runs, log });
 
   log(`upstream: ${cfg.upstreamBaseURL}`);
   log(`tokens: ${cfg.authTokens.length} configured, api keys: ${cfg.apiKeys.length > 0 ? "required" : "open"}`);
+  log(`request body limit: ${cfg.maxBodyBytes} bytes; concurrency limit: ${cfg.maxConcurrentRequests}`);
+  if (cfg.httpProxy) log(`upstream proxy: ${cfg.httpProxy}`);
 
+  const target = listenTarget(cfg.listenAddr);
   try {
-    await server.listen(portFromAddr(cfg.listenAddr));
+    await server.listen(target.port, target.host);
   } catch (error) {
     console.error(`[freebuff2api] failed to listen: ${String(error)}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   let shuttingDown = false;
@@ -138,10 +200,17 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-function portFromAddr(addr: string): number {
-  const idx = addr.lastIndexOf(":");
-  const port = Number.parseInt(addr.slice(idx + 1), 10);
-  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 8080;
+function listenTarget(addr: string): { host: string; port: number } {
+  const trimmed = addr.trim() || ":23333";
+  const idx = trimmed.lastIndexOf(":");
+  if (idx === -1) return { host: "0.0.0.0", port: portFromAddr(trimmed) };
+  const host = trimmed.slice(0, idx) || "0.0.0.0";
+  return { host, port: portFromAddr(trimmed.slice(idx + 1)) };
 }
 
-void main();
+export function portFromAddr(addr: string): number {
+  const port = Number.parseInt(addr.replace(/^.*:/, ""), 10);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : 23333;
+}
+
+if (import.meta.main) void main();

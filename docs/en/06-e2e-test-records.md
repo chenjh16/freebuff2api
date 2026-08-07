@@ -166,6 +166,120 @@ calls through the proxy, used 5 built-in tools (read/write/edit/bash/
 webfetch), handled the ESM environment on its own (re-read `package.json`),
 and produced a complete runnable project.
 
+## Stage 8: Luna / DeepSeek Flash fresh-session comparison
+
+The official source confirms that the two models use separate root agents:
+
+| Model | Agent |
+| ---- | ---- |
+| `openai/gpt-5.6-luna` | `base2-free-luna` |
+| `deepseek/deepseek-v4-flash` | `base2-free-deepseek-flash` |
+
+The official CLI sends an **empty-body** session POST and pins the model with
+`x-freebuff-model`; waiting-room GET polling carries both
+`x-freebuff-instance-id` and `x-freebuff-compact-session: 1`. One account can
+hold only one active session, so the models cannot be switched within one
+session. End the old session or use separate accounts for independent probes.
+
+Two fresh-session minimal Chat probes were run through the proxy:
+
+| Model | Fresh-session / Chat result | Conclusion |
+| ---- | ---- | ---- |
+| `openai/gpt-5.6-luna` | HTTP `503 server_error`, about 2 seconds | No usable response was available for this account/upstream state; this does not prove permanent model unavailability |
+| `deepseek/deepseek-v4-flash` | Previously completed live E2E returned HTTP 200; this probe depends on the account's current session/quota state | The proxy chain is functional, but it needs an independent fresh-session retest |
+
+The proxy defect identified was that `409 model_unavailable` or
+`409 model_locked` from session creation could be treated as a cache state and
+refreshed repeatedly, leaving the client with a timeout or generic 503.
+The current fix:
+
+1. Aligns session POST/GET with the official CLI (empty POST body, compact poll);
+2. Prevents terminal session states from looping forever;
+3. Preserves `409` and `error.code` for model admission errors instead of
+   confusing them with waiting-room/no-healthy-token `503`;
+4. Adds regression coverage for wire shape and terminal admission errors.
+
+## Stage 9: Dual-model re-verification (proxy + official CLI, MITM captured) ✅
+
+> Executed 2026-08-07 with a real account, after the Stage 8 fix. The previous
+> round's blocker (the executor's tmux helper could not write to `/tmp`) was
+> worked around with a `script`-based PTY driver (`tools/cli-probe.mjs`) that
+> drives the official CLI's TUI without tmux.
+
+### 9.1 Both models now succeed through the proxy (fresh sessions)
+
+| Model | Result | Notes |
+| ---- | ---- | ---- |
+| `openai/gpt-5.6-luna` | ✅ HTTP 200 in ~4.8s | session POST (`x-freebuff-model: openai/gpt-5.6-luna`) → `agent-runs` START `base2-free-luna` → chat `MODEL_PROBE_OK` |
+| `deepseek/deepseek-v4-flash` | ✅ HTTP 200 in ~3.2s | same chain with `base2-free-deepseek-flash` |
+
+This confirms the Stage 8 fix (preserve terminal 409 admission states, never
+loop/refresh them into a generic 503). A session must be ended (`DELETE
+/api/v1/freebuff/session`) before switching models — one account holds exactly
+one model-locked session for 1 hour.
+
+### 9.2 Model switch while a session is locked → 409, not 503
+
+With a Luna session active, requesting `deepseek/deepseek-v4-flash` through the
+proxy now returns (verified live):
+
+```json
+{"error":{"message":"free session unavailable for deepseek/deepseek-v4-flash: model_locked (session is locked to openai/gpt-5.6-luna)","type":"upstream_error","code":"model_locked"}}
+HTTP 409
+```
+
+The upstream response is `409 model_locked` with `currentModel` /
+`requestedModel`; the proxy surfaces it instead of masking it as 503.
+
+### 9.3 Official CLI, MITM-captured (both models, full chat chain)
+
+Drove the real `freebuff` CLI (v0.0.142) through
+`tools/mitm-ssl-proxy.mjs`; the model is selected by editing
+`~/.config/manicode/settings.json` `freebuffModel` (the CLI shows a model
+picker on first launch — press Enter on the highlighted model).
+
+| Model | Session POST | agent-runs START | chat POST | Reply |
+| ---- | ---- | ---- | ---- | ---- |
+| `deepseek/deepseek-v4-flash` | ✅ 200 `x-freebuff-model: deepseek/deepseek-v4-flash` | ✅ `base2-free-deepseek-flash` | ✅ 200 (99,383-byte body, full system prompt + 24 tools) | `MODEL_PROBE_OK` |
+| `openai/gpt-5.6-luna` | ✅ 200 `x-freebuff-model: openai/gpt-5.6-luna` | ✅ `base2-free-luna` | ✅ 200 (101,668-byte body) | `MODEL_PROBE_OK` (~10s) |
+
+Official CLI request sequence (from the capture): `POST /api/v1/ads` → `GET
+/api/v1/freebuff/session` (rejoin) → `GET /api/v1/me?fields=id,email` →
+`POST /api/v1/freebuff/session` (`x-freebuff-model`, empty body) → `POST
+/api/agents/validate` → `POST /api/v1/agent-runs` → `POST
+/api/v1/chat/completions`.
+
+### 9.4 Wire-format comparison (official CLI vs proxy)
+
+| Aspect | Official CLI | freebuff2api | Compatible? |
+| ---- | ---- | ---- | ---- |
+| session POST body | empty (`content-length: 0`) | empty | ✅ |
+| session POST headers | `Authorization` + `x-freebuff-model` + `Bun/1.3.14` UA (no acting-user-id) | same + `x-freebuff-acting-user-id` | ✅ (backend tolerates it) |
+| agent-runs START | `{action, agentId, ancestorRunIds: []}` | identical | ✅ |
+| chat UA | `ai-sdk/openai-compatible/0.0.0-test/...` | `.../0.10.7/...` | ✅ (gate ignores the version) |
+| chat body | full system prompt + 24 tools + `stop`/`tool_choice` | minimal + injected `Buffy` marker, no tools | ✅ (gate only checks the system phrase) |
+| `codebuff_metadata` | `run_id` / `client_id` / `cost_mode: "free"` / `freebuff_instance_id` / `trace_session_id` / `llm_step_number` | identical | ✅ |
+
+### 9.5 Root-cause summary for the 503
+
+1. **Pre-fix defect**: an upstream `409 model_unavailable` / `409
+   model_locked` on session POST was cached as a non-active session state and
+   refreshed in a loop; clients saw a hang or a generic `503`.
+2. **Fix (already in the tree)**: terminal admission states are surfaced as a
+   finite `409` + `error.code`; session POST/GET shapes match the CLI;
+   `model` is pinned per session pool.
+3. **This round's addition**: `model_locked` errors now name the locking model
+   (`currentModel` from the upstream), and other upstream session-admission
+   failures (`429` / `500` / `503` / `401`) pass through with their real status,
+   `Retry-After` and message instead of a masked "no healthy upstream token
+   available" (matching the official CLI, which retries 429/503 with backoff).
+4. **Verified live**: both models 200; model switch → `409 model_locked`.
+
+New debugging tools: `tools/probe-session.mjs` (per-model session admission
+probe, no chat quota in `--admit-only` mode) and `tools/cli-probe.mjs`
+(PTY-driven official-CLI probe with optional MITM capture). Regression tests
+added in `tests/unit/{upstream,session,server}.test.ts`.
+
 ## How to reproduce
 
 All verification scripts are archived in `tools/` (see `tools/README.md`):
@@ -176,3 +290,8 @@ All verification scripts are archived in `tools/` (see `tools/README.md`):
 - `tools/prodlike-test.mjs` — proxy-shape request verification (streaming +
   non-streaming)
 - `tools/replay-captured.mjs` — replays the official captured request
+- `tools/probe-session.mjs` — per-model session admission probe
+  (`--admit-only` never consumes chat quota)
+- `tools/cli-probe.mjs` — PTY-driven official-CLI probe (optional MITM capture)
+- `tools/model-availability.mjs` — probes every `/v1/models` entry with a
+  minimal chat (consumes quota per model)

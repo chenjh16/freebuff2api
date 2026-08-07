@@ -3,6 +3,31 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与
 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.1] - 2026-08-07
+
+### Fixed
+
+- session 准入错误不再被屏蔽为笼统 503：上游返回的 `429` / `401` / `500` /
+  `503` 连同真实状态码、`Retry-After` 与消息一起透传（与官方 CLI 对
+  429/503 退避重试的语义一致）
+- `409 model_locked` 错误消息携带锁定模型名（上游 `currentModel` /
+  `requestedModel`），便于区分"会话被另一个模型占用"与真正的模型不可用
+
+### Added
+
+- `tools/probe-session.mjs`：逐模型会话准入探针（`--admit-only` 不耗 chat 额度）
+- `tools/cli-probe.mjs`：`script` PTY 驱动官方 CLI 的最小对话探针
+  （可选 MITM 抓包），解决无 TTY 执行器无法驱动 CLI TUI 的问题
+- `tools/model-availability.mjs`：读取 `/v1/models` 后逐模型最小 chat 探测
+  （并发受限，含 `--json` 输出；配套 opt-in 测试
+  `LIVE_MODEL_TEST=1 bun test tests/e2e/model-availability.test.ts`）
+- 回归测试：session 503/429 透传、model_locked 锁定模型名、409 字段解析
+  （`tests/unit/{upstream,session,server}.test.ts`）
+- 文档：docs/06 阶段 9（双模型经代理与官方 CLI 的全链路复测记录，含 MITM
+  抓包对比）、docs/03 会话准入失败语义、tools/README、MITM 抓包实录
+- 文档：README.md 结构调整为英文在前、中文在后；docs 04 端口示例统一为
+  `:23333`；docs 06 复现清单与 docs 索引 README 补全新工具与测试状态
+
 ## [0.1.0] - 2026-08-06
 
 ### Added（首次发布）
@@ -27,3 +52,4 @@
 - `agent-runs` START body 对齐官方 CLI（`ancestorRunIds: []`）
 
 [0.1.0]: https://github.com/chenjh16/freebuff2api/releases/tag/v0.1.0
+[0.1.1]: https://github.com/chenjh16/freebuff2api/releases/tag/v0.1.1

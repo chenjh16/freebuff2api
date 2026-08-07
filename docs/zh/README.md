@@ -40,5 +40,13 @@
 ## 验证状态
 
 - ✅ `bun run typecheck`（tsc -b --noEmit）通过
+- ✅ 82 个单元测试通过（`bun test tests/unit`），覆盖配置、模型注册表、
+  run 管理、会话准入（409/503/429 分类）与服务器接口
 - ✅ 真实账号登录（device-code 流程）
 - ✅ 端到端测试：流式 + 非流式 chat 均返回 200 与真实回复
+- ✅ 双模型复测（`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`）：
+  经代理与官方 CLI（MITM 抓包）全链路通过——见
+  [06-端到端测试记录](06-端到端测试记录.md) 阶段 9
+- 🔧 调试工具：[`tools/`](../../tools/README.md)（TLS MITM 代理、
+  `probe-session.mjs` 准入探针、`cli-probe.mjs` 官方 CLI 驱动、
+  `model-availability.mjs` 逐模型探测）

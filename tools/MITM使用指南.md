@@ -1,5 +1,7 @@
 # MITM 工具使用指南
 
+> 仅调试自己账号的流量。不要记录或提交 Authorization、Cookie、完整 prompt、响应正文或其他凭证内容。
+
 本指南介绍如何用 `tools/` 下的两个中间人代理抓取官方 freebuff CLI 的
 真实请求，以及如何解读抓包结果。**这是本仓库逆向分析的核心工作流**
 （成果见 [docs/zh/04-请求格式破解.md](../docs/zh/04-请求格式破解.md)，
@@ -85,6 +87,20 @@ RESP BODY: : connected … data: {"id":"…","object":"chat.completion.chunk",�
 
 > 抓包日志可重定向保存：`node tools/mitm-ssl-proxy.mjs > /tmp/mitmssl.log 2>&1`
 
+## 双模型对比与 session 约束
+
+官方 CLI 没有 `--model` 命令行参数，模型由 TUI 选择器控制，并持久化为
+`~/.config/manicode/settings.json` 的 `freebuffModel` 字段。两个目标模型必须
+使用专用 Agent：
+
+- `openai/gpt-5.6-luna` → `base2-free-luna`
+- `deepseek/deepseek-v4-flash` → `base2-free-deepseek-flash`
+
+一个账号只能同时持有一个活动 session，且一小时 session 固定一个模型。请按以下
+顺序比较：CLI 选择模型并发送一次最小消息 → 退出并确认 session 已释放 → 切换第二个
+模型重复；代理侧也为每个模型启动全新进程。对比时只保存 method/path/status、模型、
+Agent、header 名称和 body 字段结构，不保存密钥或正文。
+
 ## 解读要点
 
 1. **请求序列**：ads → session GET → me → session POST → ads →
@@ -94,6 +110,10 @@ RESP BODY: : connected … data: {"id":"…","object":"chat.completion.chunk",�
 3. **system 消息**：官方 CLI 的 system 提示开头是
    `You are Buffy, the strategic coding assistant` —— 这就是网关检查的短语
 4. **agent-runs body**：`{action:"START",agentId:"…",ancestorRunIds:[]}`
+5. **session POST**：官方 CLI 发送空 body；代理不能依赖 `{}` 的兼容行为。
+6. **等待室 GET**：官方 CLI 带 `x-freebuff-compact-session: 1`；模型在原始 POST 中固定。
+7. **错误分类**：`409 model_unavailable/model_locked` 表示模型入场失败；不要把它
+   误报为 `503 no healthy token`。
 
 完整实录见 [captured/mitm-抓包实录.md](captured/mitm-抓包实录.md)。
 

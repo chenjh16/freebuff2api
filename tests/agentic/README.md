@@ -32,7 +32,7 @@ tests/
 
 ```bash
 # 运行全部案例
-node tests/agentic/run.mjs
+node tests/agentic/run.mjs all
 
 # 只运行单个案例
 node tests/agentic/run.mjs opencode-demo
@@ -41,12 +41,41 @@ node tests/agentic/run.mjs opencode-md2html
 # 指定端口 / 续跑上次会话 / 更长超时
 node tests/agentic/run.mjs all --port 18080
 node tests/agentic/run.mjs opencode-md2html --continue
-FB2API_PORT=18090 OPENCODE_TIMEOUT_MIN=30 node tests/agentic/run.mjs
+FB2API_PORT=18090 OPENCODE_TIMEOUT_MIN=30 node tests/agentic/run.mjs opencode-demo
 ```
 
-运行器会：启动代理 → 等待 `/healthz` → 自动把 opencode 的 `freebuff` provider
-指向代理（合并写入 `~/.config/opencode/config.json`，不覆盖你的其他配置）→
-执行案例 → 独立验收 → 停止代理。返回码 0=全部通过。
+一键模式会自动执行：检查 → 准备配置 → 启动代理 → 运行 opencode → 独立验收 →
+停止代理 → 恢复配置。返回码 0=全部通过。
+
+## 分阶段运行（推荐用于 Daytona/CI/远程执行器）
+
+长时间 Agent 任务不要放进一个远程命令请求。每个阶段单独执行，状态保存在
+系统临时目录，默认不会写入仓库：
+
+```bash
+# 1. 只检查依赖、案例和登录状态，不访问上游
+node tests/agentic/run.mjs check
+
+# 2. 备份并准备 opencode provider 配置
+node tests/agentic/run.mjs prepare --port 18080
+
+# 3. 独立启动代理；日志位于 /tmp/freebuff2api-agentic-*/proxy.log
+node tests/agentic/run.mjs start-proxy --port 18080
+
+# 4. 另一个命令请求中运行真实 Agent
+node tests/agentic/run.mjs run opencode-demo
+
+# 5. 不消耗模型额度的独立验收
+node tests/agentic/run.mjs validate opencode-demo
+
+# 6. 无论成功失败都执行，停止代理并恢复原 opencode 配置
+node tests/agentic/run.mjs cleanup
+```
+
+如果某一步失败，先重跑同一阶段或查看临时目录中的 `proxy.log`，不需要从头
+执行。`prepare` 会备份原配置；只有配置内容仍是 runner 生成的版本时，
+`cleanup` 才会恢复它。如果用户在中途手动修改了配置，runner 会保留修改并
+给出警告。
 
 > ⚠️ 每次运行都会真实消耗免费账号额度（deepseek-v4-flash 每日约 6 次），
 > 请按需运行，避免频繁跑 `all`。
@@ -117,7 +146,7 @@ OpenAI-compatible client can drive Freebuff's free models through this proxy.
 
 ```bash
 # run every case
-node tests/agentic/run.mjs
+node tests/agentic/run.mjs all
 
 # run a single case
 node tests/agentic/run.mjs opencode-demo
@@ -126,13 +155,31 @@ node tests/agentic/run.mjs opencode-md2html
 # custom port / continue a session / longer timeout
 node tests/agentic/run.mjs all --port 18080
 node tests/agentic/run.mjs opencode-md2html --continue
-FB2API_PORT=18090 OPENCODE_TIMEOUT_MIN=30 node tests/agentic/run.mjs
+FB2API_PORT=18090 OPENCODE_TIMEOUT_MIN=30 node tests/agentic/run.mjs opencode-demo
 ```
 
-The runner: starts the proxy → waits for `/healthz` → points opencode's
-`freebuff` provider at the proxy (merges into `~/.config/opencode/config.json`
-without clobbering your other config) → executes the case → independently
-validates → stops the proxy. Exit code 0 = all passed.
+The one-shot runner performs check → prepare → start proxy → run opencode →
+independent validation → stop proxy → restore config. Exit code 0 means all
+cases passed.
+
+## Resumable phases (recommended for Daytona/CI/remote executors)
+
+Do not put a long Agent task into one remote command request. Run each phase
+separately; state is stored in the system temporary directory, not the repo:
+
+```bash
+node tests/agentic/run.mjs check
+node tests/agentic/run.mjs prepare --port 18080
+node tests/agentic/run.mjs start-proxy --port 18080
+node tests/agentic/run.mjs run opencode-demo
+node tests/agentic/run.mjs validate opencode-demo
+node tests/agentic/run.mjs cleanup
+```
+
+If a phase fails, rerun that phase or inspect `proxy.log` under
+`/tmp/freebuff2api-agentic-*/`; no full restart is required. `prepare` backs up
+the previous opencode config. `cleanup` restores it only when it has not been
+modified outside the runner; manual changes are preserved with a warning.
 
 > ⚠️ Each run really consumes free-tier quota (~6 deepseek-v4-flash requests a
 > day). Run sparingly; avoid `all` on a regular basis.

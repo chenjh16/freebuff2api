@@ -1,6 +1,6 @@
 {
   "name": "freebuff2api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenAI-compatible reverse proxy for the Freebuff (freebuff.com) coding API. Zero runtime dependencies.",
   "license": "MIT",
   "author": "chenjh16",
@@ -51,6 +51,7 @@
     "test": "bun test tests/unit",
     "test:unit": "bun test tests/unit",
     "test:e2e": "bun test tests/e2e",
+    "test:models": "node tools/model-availability.mjs",
     "test:agentic": "node tests/agentic/run.mjs",
     "test:all": "bun run test:unit && bun run test:e2e"
   },

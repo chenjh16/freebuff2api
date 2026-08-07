@@ -5,7 +5,7 @@ import type { ModelRegistry } from "../../src/models.ts";
 import type { RunManager } from "../../src/runs.ts";
 import { Server } from "../../src/server.ts";
 import { WaitingRoomError, type TokenManager } from "../../src/session.ts";
-import type { UpstreamClient } from "../../src/upstream.ts";
+import { UpstreamError, type UpstreamClient } from "../../src/upstream.ts";
 
 const MARKER_PHRASE = "You are Buffy, the strategic coding assistant";
 const MODEL = "deepseek/deepseek-v4-flash";
@@ -21,6 +21,8 @@ interface FullHarness {
 function makeFullHarness(opts: {
   apiKeys?: string[];
   models?: string[];
+  maxBodyBytes?: number;
+  maxConcurrentRequests?: number;
   chatHandler?: (body: string, call: number) => Response | Promise<Response>;
   acquireSession?: () => Promise<{ pool: { token: string }; instanceId: string | null }>;
 } = {}): FullHarness {
@@ -35,6 +37,8 @@ function makeFullHarness(opts: {
     actingUserId: null,
     apiKeys: opts.apiKeys ?? [],
     httpProxy: null,
+    maxBodyBytes: opts.maxBodyBytes ?? 16 * 1024 * 1024,
+    maxConcurrentRequests: opts.maxConcurrentRequests ?? 32,
   } as Config;
 
   const bodies: string[] = [];
@@ -206,6 +210,21 @@ describe("Server HTTP surface", () => {
     expect(body.error.code).toBe("model_not_found");
   });
 
+  test("rejects request bodies larger than the configured limit", async () => {
+    const limited = makeFullHarness({ maxBodyBytes: 32 });
+    const started = await limited.start();
+    try {
+      const resp = await fetch(`${started.base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "this body is larger" }] }),
+      });
+      expect(resp.status).toBe(413);
+    } finally {
+      await started.server.close();
+    }
+  });
+
   test("rejects malformed JSON", async () => {
     const resp = await fetch(`${base}/v1/chat/completions`, {
       method: "POST",
@@ -333,6 +352,84 @@ describe("Server HTTP surface", () => {
     try {
       const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(503);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("preserves terminal model admission errors instead of masking them as 503", async () => {
+    const modelHarness = makeFullHarness({
+      acquireSession: async () => {
+        throw new UpstreamError("model unavailable", 409, undefined, "model_unavailable");
+      },
+    });
+    const started = await modelHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      expect(resp.status).toBe(409);
+      const body = (await resp.json()) as { error: { code: string; type: string } };
+      expect(body.error.code).toBe("model_unavailable");
+      expect(body.error.type).toBe("upstream_error");
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("model_locked admission errors name the locked model", async () => {
+    const modelHarness = makeFullHarness({
+      acquireSession: async () => {
+        throw new UpstreamError(
+          "free session unavailable for deepseek/deepseek-v4-flash: model_locked (session is locked to openai/gpt-5.6-luna)",
+          409,
+          undefined,
+          "model_locked",
+        );
+      },
+    });
+    const started = await modelHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      expect(resp.status).toBe(409);
+      const body = (await resp.json()) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe("model_locked");
+      expect(body.error.message).toContain("openai/gpt-5.6-luna");
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("passes through upstream session 503 with its message and Retry-After", async () => {
+    const errHarness = makeFullHarness({
+      acquireSession: async () => {
+        throw new UpstreamError("free session POST failed: 503", 503, 30_000, "capacity exhausted");
+      },
+    });
+    const started = await errHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      expect(resp.status).toBe(503);
+      expect(resp.headers.get("retry-after")).toBe("30");
+      const body = (await resp.json()) as { error: { message: string; code?: string } };
+      expect(body.error.message).toContain("capacity exhausted");
+      expect(body.error.code).toBeUndefined();
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("passes through upstream session 429 with Retry-After instead of masking as 503", async () => {
+    const errHarness = makeFullHarness({
+      acquireSession: async () => {
+        throw new UpstreamError("rate limited", 429, 60_000, "rate_limited");
+      },
+    });
+    const started = await errHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      expect(resp.status).toBe(429);
+      expect(resp.headers.get("retry-after")).toBe("60");
+      const body = (await resp.json()) as { error: { message: string } };
+      expect(body.error.message).toBe("rate_limited");
     } finally {
       await started.server.close();
     }

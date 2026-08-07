@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, parseDuration } from "../../src/config.ts";
+import { loadConfig, parseByteSize, parseDuration } from "../../src/config.ts";
 
 const ENV_KEYS = [
   "AUTH_TOKENS",
@@ -16,7 +16,10 @@ const ENV_KEYS = [
   "REQUEST_TIMEOUT",
   "ROTATION_INTERVAL",
   "HTTP_PROXY",
+  "HTTPS_PROXY",
   "https_proxy",
+  "MAX_BODY_SIZE",
+  "MAX_CONCURRENT_REQUESTS",
   "FREEBUFF2API_CONFIG_DIR",
 ];
 
@@ -61,6 +64,14 @@ describe("parseDuration", () => {
   });
 });
 
+describe("parseByteSize", () => {
+  test("parses common byte units", () => {
+    expect(parseByteSize("16mb", 0)).toBe(16_000_000);
+    expect(parseByteSize("16MiB", 0)).toBe(16 * 1024 * 1024);
+    expect(parseByteSize("bad", 123)).toBe(123);
+  });
+});
+
 describe("loadConfig", () => {
   test("resolves tokens from AUTH_TOKENS with splitting and dedupe", () => {
     process.env.AUTH_TOKENS = "tok-a,tok-b;tok-c\ntok-a";
@@ -102,6 +113,9 @@ describe("loadConfig", () => {
     expect(cfg.requestTimeoutMs).toBe(15 * 60_000);
     expect(cfg.apiKeys).toEqual([]);
     expect(cfg.httpProxy).toBeNull();
+    expect(cfg.listenAddr).toBe(":23333");
+    expect(cfg.maxBodyBytes).toBe(16_000_000);
+    expect(cfg.maxConcurrentRequests).toBe(32);
   });
 
   test("applies REQUEST_TIMEOUT / ROTATION_INTERVAL env overrides", () => {
@@ -149,5 +163,24 @@ describe("loadConfig", () => {
     delete process.env.HTTP_PROXY;
     process.env.https_proxy = "http://127.0.0.1:7891";
     expect(loadConfig().httpProxy).toBe("http://127.0.0.1:7891");
+  });
+
+  test("HTTP_PROXY precedence is CLI > config.json > environment", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.HTTP_PROXY = "http://env.proxy:8080";
+    const path = join(configBase, "config.json");
+    writeFileSync(path, JSON.stringify({ HTTP_PROXY: "http://file.proxy:8080" }), "utf8");
+
+    expect(loadConfig({ configPath: path }).httpProxy).toBe("http://file.proxy:8080");
+    expect(loadConfig({ configPath: path, httpProxy: "http://cli.proxy:8080" }).httpProxy).toBe("http://cli.proxy:8080");
+  });
+
+  test("parses body and concurrency limits from environment", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.MAX_BODY_SIZE = "8MiB";
+    process.env.MAX_CONCURRENT_REQUESTS = "7";
+    const cfg = loadConfig();
+    expect(cfg.maxBodyBytes).toBe(8 * 1024 * 1024);
+    expect(cfg.maxConcurrentRequests).toBe(7);
   });
 });

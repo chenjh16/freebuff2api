@@ -16,6 +16,7 @@ interface CachedRun {
 
 export class RunManager {
   private runs = new Map<string, CachedRun>();
+  private pending = new Map<string, Promise<string>>();
 
   constructor(
     private readonly client: UpstreamClient,
@@ -34,6 +35,21 @@ export class RunManager {
     if (cached && Date.now() - cached.startedAt < this.rotationIntervalMs) {
       return cached.runId;
     }
+    const inFlight = this.pending.get(key);
+    if (inFlight) return inFlight;
+
+    const promise = this.startAndCache(key, token, agentId, signal);
+    this.pending.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.pending.get(key) === promise) this.pending.delete(key);
+    }
+  }
+
+  private async startAndCache(key: string, token: string, agentId: string, signal?: AbortSignal): Promise<string> {
+    const current = this.runs.get(key);
+    if (current && Date.now() - current.startedAt < this.rotationIntervalMs) return current.runId;
     const runId = await this.client.startRun(token, agentId, { signal });
     this.runs.set(key, { runId, startedAt: Date.now() });
     this.log(`[runs] started run ${runId} (agent: ${agentId})`);

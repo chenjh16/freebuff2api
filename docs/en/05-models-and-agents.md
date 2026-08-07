@@ -97,3 +97,32 @@ definitions: `spawn_agents`, `read_files`, `read_subtree`, `write_todos`,
 > Verified: the tools array is **not required** by the gate (the NO-TOOLS
 > variant passed), so the proxy doesn't need to replicate those 24 tool
 > definitions.
+
+## Supported models and availability probing
+
+The curated fallback currently advertises and routes these model ids:
+
+- `deepseek/deepseek-v4-pro`
+- `deepseek/deepseek-v4-flash`
+- `mimo/mimo-v2.5`
+- `minimax/minimax-m3`
+- `openai/gpt-5.6-luna`
+- `z-ai/glm-5.2`
+- `google/gemini-3.5-flash-lite`
+
+When the official repository is reachable at startup, the remote mapping is
+used instead. Therefore `/v1/models` means “known and routable”; it does not
+guarantee that a live session or quota is available at that moment.
+
+A full availability probe makes a real chat call for every advertised model
+and can consume quota:
+
+```bash
+node tools/model-availability.mjs --help
+node tools/model-availability.mjs --base-url http://127.0.0.1:23333/v1 --concurrency 3
+node tools/model-availability.mjs --models deepseek/deepseek-v4-flash,openai/gpt-5.6-luna --json
+```
+
+There is also an opt-in automated probe:
+`LIVE_MODEL_TEST=1 bun test tests/e2e/model-availability.test.ts --timeout 180000`.
+Without `LIVE_MODEL_TEST=1`, it performs no upstream calls.

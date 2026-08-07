@@ -2,8 +2,8 @@
  * HTTP client for the Freebuff backend API.
  *
  * Wire protocol (verified against the official CodebuffAI/freebuff client):
- *   POST   /api/v1/freebuff/session     create/refresh a free session (body "{}")
- *   GET    /api/v1/freebuff/session     poll a queued session (x-freebuff-instance-id header)
+ *   POST   /api/v1/freebuff/session     create/refresh a free session (empty body)
+ *   GET    /api/v1/freebuff/session     poll a queued session (instance + compact headers)
  *   DELETE /api/v1/freebuff/session     end a session
  *   POST   /api/v1/agent-runs           START / FINISH an agent run
  *   POST   /api/v1/chat/completions     OpenAI-compatible chat (streaming supported)
@@ -22,6 +22,10 @@ export interface FreebuffSessionResponse {
   estimatedWaitMs?: number;
   gracePeriodRemainingMs?: number;
   message?: string;
+  /** Present on 409 model_locked responses: the model the account's active session is locked to. */
+  currentModel?: string;
+  /** Present on 409 model_locked / model_unavailable responses: the model that was requested. */
+  requestedModel?: string;
 }
 
 export class UpstreamError extends Error {
@@ -141,10 +145,11 @@ export class UpstreamClient {
    * body so callers can react to waiting-room / ban states.
    */
   async createOrRefreshSession(token: string, opts: { model?: string; signal?: AbortSignal } = {}): Promise<FreebuffSessionResponse> {
-    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": CLI_USER_AGENT };
+    // Match the official CLI: POST has no request body and no explicit Accept
+    // header. The selected model is pinned on this mutation only.
+    const headers: Record<string, string> = { "User-Agent": CLI_USER_AGENT };
     if (opts.model) headers["x-freebuff-model"] = opts.model;
     const resp = await this.request("POST", "/api/v1/freebuff/session", token, {
-      body: "{}",
       headers,
       signal: opts.signal,
     });
@@ -154,9 +159,16 @@ export class UpstreamClient {
   }
 
   /** Poll a queued session identified by its instance id. */
-  async getSession(token: string, instanceId: string, opts: { signal?: AbortSignal } = {}): Promise<FreebuffSessionResponse> {
+  async getSession(token: string, instanceId: string, opts: { model?: string; signal?: AbortSignal } = {}): Promise<FreebuffSessionResponse> {
     const resp = await this.request("GET", "/api/v1/freebuff/session", token, {
-      headers: { Accept: "application/json", "x-freebuff-instance-id": instanceId, "User-Agent": CLI_USER_AGENT },
+      // The official CLI uses the compact response form while polling. The
+      // model is pinned on the original POST and is intentionally not repeated
+      // on this read-only request.
+      headers: {
+        "x-freebuff-instance-id": instanceId,
+        "x-freebuff-compact-session": "1",
+        "User-Agent": CLI_USER_AGENT,
+      },
       signal: opts.signal,
     });
     if (resp.status === 404) return { status: "disabled" };
@@ -272,7 +284,14 @@ export class UpstreamClient {
     }
     if (resp.status < 200 || resp.status >= 300) {
       const parsed = this.tryParse(body);
-      const code = parsed && typeof parsed.message === "string" ? parsed.message : undefined;
+      // errorCode carries the parsed `message` (falling back to `status`) so
+      // callers can preserve the upstream's reason instead of masking it.
+      const code =
+        parsed && typeof parsed.message === "string"
+          ? parsed.message
+          : parsed && typeof parsed.status === "string"
+            ? parsed.status
+            : undefined;
       throw new UpstreamError(
         `free session request failed with status ${resp.status}: ${body.slice(0, 500)}`,
         resp.status,

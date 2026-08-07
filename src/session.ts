@@ -41,6 +41,7 @@ export interface SessionSnapshot {
 
 interface CachedSession {
   status: string;
+  model: string | null;
   instanceId: string | null;
   expiresAt: number; // epoch ms, 0 if unknown
   position: number;
@@ -65,10 +66,10 @@ export class SessionPool {
   ) {}
 
   /** Returns the active instance id, or null when free mode is disabled. */
-  async ensureSession(signal?: AbortSignal): Promise<string | null> {
+  async ensureSession(model?: string, signal?: AbortSignal): Promise<string | null> {
     for (;;) {
       const now = Date.now();
-      const ready = this.readySessionLocked(now);
+      const ready = this.readySessionLocked(now, model);
       if (ready.ready) {
         return ready.instanceId;
       }
@@ -84,7 +85,7 @@ export class SessionPool {
         continue;
       }
 
-      const promise = this.refresh(signal);
+      const promise = this.refresh(model, signal);
       this.refreshPromise = promise;
       try {
         const next = await promise;
@@ -131,11 +132,11 @@ export class SessionPool {
     };
   }
 
-  private readySessionLocked(now: number): { ready: boolean; instanceId: string | null } {
+  private readySessionLocked(now: number, model?: string): { ready: boolean; instanceId: string | null } {
     const s = this.session;
     if (!s) return { ready: false, instanceId: null };
     if (s.status === "disabled") return { ready: true, instanceId: null };
-    if (s.status === "active") {
+    if (s.status === "active" && (!model || s.model === model)) {
       if (s.instanceId && (s.expiresAt === 0 || now < s.expiresAt - 5_000)) {
         return { ready: true, instanceId: s.instanceId };
       }
@@ -143,14 +144,14 @@ export class SessionPool {
     return { ready: false, instanceId: null };
   }
 
-  private async refresh(signal?: AbortSignal): Promise<CachedSession | null> {
+  private async refresh(model?: string, signal?: AbortSignal): Promise<CachedSession | null> {
     const current = this.session;
     let state: FreebuffSessionResponse;
     try {
       if (current && current.status === "queued" && current.instanceId) {
-        state = await this.client.getSession(this.token, current.instanceId, { signal });
+        state = await this.client.getSession(this.token, current.instanceId, { model, signal });
       } else {
-        state = await this.client.createOrRefreshSession(this.token, { signal });
+        state = await this.client.createOrRefreshSession(this.token, { model, signal });
       }
     } catch (error) {
       throw error;
@@ -160,12 +161,12 @@ export class SessionPool {
       const status = (state.status ?? "").trim();
       switch (true) {
         case status === "disabled":
-          return { status: "disabled", instanceId: null, expiresAt: 0, position: 0, queueDepth: 0, pollAt: 0, retryAfterMs: 0 };
+          return { status: "disabled", model: model ?? null, instanceId: null, expiresAt: 0, position: 0, queueDepth: 0, pollAt: 0, retryAfterMs: 0 };
         case status === "active": {
           const instanceId = (state.instanceId ?? "").trim();
           if (!instanceId) throw new Error("free session active response missing instanceId");
           const expiresAt = state.expiresAt ? Date.parse(state.expiresAt) : 0;
-          return { status: "active", instanceId, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0, position: 0, queueDepth: 0, pollAt: 0, retryAfterMs: 0 };
+          return { status: "active", model: model ?? null, instanceId, expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0, position: 0, queueDepth: 0, pollAt: 0, retryAfterMs: 0 };
         }
         case status === "queued": {
           const instanceId = (state.instanceId ?? "").trim();
@@ -174,17 +175,35 @@ export class SessionPool {
           const queueDepth = Math.max(state.queueDepth ?? position, position);
           const retryAfterMs = queuedPollDelayMs(state.estimatedWaitMs);
           this.logQueuePosition(tokenLabel(this.token), position, queueDepth, state.estimatedWaitMs);
-          return { status: "queued", instanceId, expiresAt: 0, position, queueDepth, pollAt: Date.now() + retryAfterMs, retryAfterMs };
+          return { status: "queued", model: model ?? null, instanceId, expiresAt: 0, position, queueDepth, pollAt: Date.now() + retryAfterMs, retryAfterMs };
         }
         case ENDED_STATUSES.has(status):
-          state = await this.client.createOrRefreshSession(this.token, { signal });
+          state = await this.client.createOrRefreshSession(this.token, { model, signal });
           continue;
         case QUEUED_STATUSES.has(status): // unreachable; kept for clarity
           continue;
         default:
-          // Terminal/odd statuses (country_blocked, banned, model_locked, ...):
-          // surface them so the request fails with a descriptive error.
-          return { status, instanceId: null, expiresAt: 0, position: 0, queueDepth: 0, pollAt: 0, retryAfterMs: 0 };
+          // Terminal/odd statuses (country_blocked, banned, model_locked,
+          // model_unavailable, ...): surface them as a finite error. Returning
+          // a non-active cached session here would make ensureSession() retry
+          // forever because the state is neither ready nor queued.
+          //
+          // model_locked tells us which model the account's one-hour session
+          // is pinned to (the official CLI surfaces this and asks the user to
+          // end the session before switching); include it for diagnostics.
+          const lock =
+            state.currentModel
+              ? ` (session is locked to ${state.currentModel})`
+              : state.requestedModel
+                ? ` (requested: ${state.requestedModel})`
+                : "";
+          throw new UpstreamError(
+            `free session unavailable for ${model ?? "requested model"}: ${status}${lock}${state.message ? ` (${state.message})` : ""}`,
+            409,
+            undefined,
+            status,
+            state.message,
+          );
       }
     }
   }
@@ -208,6 +227,11 @@ function tokenLabel(token: string): string {
 }
 
 export { tokenLabel };
+
+function isRetryableSessionFailure(error: unknown): boolean {
+  if (error instanceof UpstreamError) return error.statusCode === 0 || error.statusCode >= 500;
+  return error instanceof TypeError || (error instanceof Error && /timeout|network|fetch|socket/i.test(error.message));
+}
 
 /**
  * Manages one SessionPool per auth token with cooldown + round-robin rotation.
@@ -253,20 +277,34 @@ export class TokenManager {
     );
   }
 
-  /** Acquire an upstream session for the next available token. */
-  async acquireSession(signal?: AbortSignal): Promise<{ pool: SessionPool; instanceId: string | null }> {
-    const pool = this.pickPool();
-    try {
-      const instanceId = await pool.ensureSession(signal);
-      return { pool, instanceId };
-    } catch (error) {
-      // A 401 here means the token itself was rejected by the upstream;
-      // cooldown it so subsequent requests rotate to a healthy token.
-      if (error instanceof UpstreamError && error.statusCode === 401) {
-        this.cooldown(pool.token, TOKEN_COOLDOWN_MS, "upstream auth rejected token");
+  /**
+   * Acquire an upstream session for the next available token. Transient
+   * session failures are tried against each other non-cooldowned token before
+   * the error is returned to the HTTP layer; waiting-room responses are
+   * returned immediately because they describe the account/session state.
+   */
+  async acquireSession(model?: string, signal?: AbortSignal): Promise<{ pool: SessionPool; instanceId: string | null }> {
+    let lastError: unknown;
+    const attempts = Math.max(1, this.pools.length);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const pool = this.pickPool();
+      try {
+        const instanceId = await pool.ensureSession(model, signal);
+        return { pool, instanceId };
+      } catch (error) {
+        lastError = error;
+        // A 401 here means the token itself was rejected by the upstream;
+        // cooldown it so subsequent requests rotate to a healthy token.
+        if (error instanceof UpstreamError && error.statusCode === 401) {
+          this.cooldown(pool.token, TOKEN_COOLDOWN_MS, "upstream auth rejected token");
+        }
+        if (error instanceof WaitingRoomError || !isRetryableSessionFailure(error)) {
+          throw error;
+        }
+        this.log(`[session:${tokenLabel(pool.token)}] transient session failure; trying another token`);
       }
-      throw error;
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "no upstream token available"));
   }
 
   /** Cooldown a token after an auth failure. */

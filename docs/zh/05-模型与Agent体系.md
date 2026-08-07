@@ -91,3 +91,30 @@ freebuff2api 启动时抓取该文件（及其 import 的常量文件），解�
 
 > 实测：tools 数组对网关 **不是必需** 的（NO-TOOLS 变体通过），
 > 代理无需复制这 24 个工具定义。
+
+## 当前支持与可用性探测
+
+内置兜底列表当前包含以下可供 `/v1/models` 广告和路由的模型：
+
+- `deepseek/deepseek-v4-pro`
+- `deepseek/deepseek-v4-flash`
+- `mimo/mimo-v2.5`
+- `minimax/minimax-m3`
+- `openai/gpt-5.6-luna`
+- `z-ai/glm-5.2`
+- `google/gemini-3.5-flash-lite`
+
+启动时若能访问官方仓库，实际列表以远程解析结果为准；因此 `/v1/models`
+表示“已知/可路由”，不保证当前会话额度或上游实例一定可用。
+
+全面探测每个已广告模型会真实调用 chat 并消耗额度：
+
+```bash
+node tools/model-availability.mjs --help
+node tools/model-availability.mjs --base-url http://127.0.0.1:23333/v1 --concurrency 3
+node tools/model-availability.mjs --models deepseek/deepseek-v4-flash,openai/gpt-5.6-luna --json
+```
+
+模型探测也有对应的 opt-in 测试：
+`LIVE_MODEL_TEST=1 bun test tests/e2e/model-availability.test.ts --timeout 180000`。
+没有显式设置 `LIVE_MODEL_TEST=1` 时不会访问上游。

@@ -41,8 +41,9 @@ POST /api/v1/freebuff/session
 Authorization: Bearer <token>
 User-Agent: Bun/1.3.14
 x-freebuff-model: deepseek/deepseek-v4-flash   # optional, pins the model
-Content-Type: application/json
-body: {}                                        # official CLI sends an empty body; "{}" also works
+
+# The official CLI sends no request body and does not require an explicit Accept header.
+body: <empty>
 ```
 
 Success (`status: active`):
@@ -68,11 +69,38 @@ Other statuses: `disabled` (free tier unavailable, 404),
 `none`/`ended`/`superseded` (need to re-create), `country_blocked`/`banned`
 (403), `model_locked`/`model_unavailable` (409), 429 (rate limited).
 
+> 404 mapping: the official CLI maps 404 → `{status: "none"}` (free tier not
+> available); freebuff2api maps it to `{status: "disabled"}` — both stop
+> polling.
+
+Model locked (`409`, verified live — one account holds a single
+model-locked 1-hour session):
+
+```json
+{
+  "status": "model_locked",
+  "currentModel": "openai/gpt-5.6-luna",      // what the active session is pinned to
+  "requestedModel": "deepseek/deepseek-v4-flash", // what was asked for
+  "accessTier": "full"
+}
+```
+
+> The official CLI's response to `model_locked` (from its bundled source): if
+> the user picked a different model it first `DELETE`s the session and then
+> re-POSTs (auto-switch); if the DELETE fails it tells the user to run
+> `/end-session`. It also applies exponential backoff (base 20s, cap 300s)
+> and treats `408/429/503` on session POST as retryable while all other 4xx
+> stop. freebuff2api surfaces `409 model_locked` (with the locking model) and
+> passes through other admission failures (`429`/`500`/`503`/`401`) with their
+> real status, `Retry-After` and message instead of masking them as a generic
+> 503.
+
 ### Poll the waiting room
 
 ```
 GET /api/v1/freebuff/session
 x-freebuff-instance-id: <instanceId>
+x-freebuff-compact-session: 1
 User-Agent: Bun/1.3.14
 ```
 
@@ -174,4 +202,11 @@ Response characteristics:
 | 403 `free_mode_cli_required` | Missing the CLI system marker | Inject marker and retry |
 | 403 `free_mode_invalid_agent_hierarchy` | Run agent doesn't match the model | Fix agentId |
 | 429 | Rate limited | Return with Retry-After |
+| 409 `model_unavailable` / `model_locked` | Model cannot be admitted or is locked | Preserve 409 and the error code; do not mask it as 503 |
 | 503 | Waiting room / no healthy token | Return with Retry-After |
+
+Session-admission (`POST /api/v1/freebuff/session`) failures: `409
+model_unavailable`/`model_locked` are terminal for that model — preserved as
+409 + `error.code` (never looped into a timeout or a generic 503); other
+statuses (`429`, `401`, `500`, `503`) are passed through with `Retry-After`
+and the upstream message so clients can retry like the official CLI does.

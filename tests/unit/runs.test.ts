@@ -21,6 +21,23 @@ function fakeClient() {
 }
 
 describe("RunManager", () => {
+  test("coalesces concurrent starts for the same (token, agent)", async () => {
+    const client = fakeClient();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = client.startRun;
+    client.startRun = async (token: string, agentId: string) => {
+      await gate;
+      return original(token, agentId);
+    };
+    const manager = new RunManager(client as never, 60_000, () => {});
+    const first = manager.acquire("t1", "agent-a");
+    const second = manager.acquire("t1", "agent-a");
+    release();
+    expect(await first).toBe(await second);
+    expect(client.starts).toHaveLength(1);
+  });
+
   test("reuses a cached run while it is fresh", async () => {
     const client = fakeClient();
     const manager = new RunManager(client as never, 60_000, () => {});

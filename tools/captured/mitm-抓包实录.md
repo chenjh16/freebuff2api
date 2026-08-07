@@ -116,3 +116,49 @@ data: …
 | `chatbody-official.json` | ③ 请求的完整 body（64KB） |
 | `agentdefs-full.json` | ⑥ /api/agents/validate 的完整 payload（460KB） |
 | `agentdefs.json` | Agent 定义精简版 |
+
+## 2026-08-07 补充：双模型复测抓包（v0.0.142）
+
+用 `tools/cli-probe.mjs`（`script` PTY，无需 tmux）驱动官方 CLI，经
+`mitm-ssl-proxy.mjs` 抓取，模型通过 `~/.config/manicode/settings.json` 的
+`freebuffModel` 切换（首次启动的模型选择器上直接按 Enter）。两个模型均
+完成一次最小对话，全部响应 200。原始日志在本机
+`/tmp/cli-probe-ds.mitm.log` / `/tmp/cli-probe-luna3.mitm.log`（约 60KB），
+本文仅摘录对比要点（token/用户 id/正文已脱敏）。
+
+### deepseek/deepseek-v4-flash
+
+```
+POST /api/v1/freebuff/session
+  authorization: Bearer 796...<redacted>
+  x-freebuff-model: deepseek/deepseek-v4-flash
+  user-agent: Bun/1.3.14
+  accept: */*
+  content-length: 0
+→ 200
+POST /api/v1/agent-runs   {action:START, agentId:base2-free-deepseek-flash, ancestorRunIds:[]} → 200
+POST /api/v1/chat/completions  (99,383B：完整 system 提示 + 24 tools + stop + tool_choice) → 200
+  回复：MODEL_PROBE_OK
+```
+
+### openai/gpt-5.6-luna
+
+```
+POST /api/v1/freebuff/session
+  x-freebuff-model: openai/gpt-5.6-luna
+  （其余同 deepseek，无 acting-user-id）
+→ 200（TUI 徽章：GPT-5.6 Luna · 59m left）
+POST /api/v1/agent-runs   {action:START, agentId:base2-free-luna, ancestorRunIds:[]} → 200
+POST /api/v1/chat/completions  (101,668B) → 200
+  回复：MODEL_PROBE_OK（约 10s）
+```
+
+### 与代理请求形状的差异（结论，详见 docs/06 阶段 9）
+
+- session POST：官方 CLI 不带 `x-freebuff-acting-user-id`；freebuff2api 会带，
+  上游均接受。
+- chat：官方 CLI 发送完整 system 提示 + 24 个 tools；freebuff2api 只注入
+  `Buffy` 标记短语 + 最小载荷，网关均放行（检查点只是 system 短语）。
+- 模型锁定：另一模型会话活跃时 POST 返回 `409 model_locked`（含
+  `currentModel`/`requestedModel`）；官方 CLI 会先 DELETE 再重试，freebuff2api
+  上抛 409 + 锁定模型名。

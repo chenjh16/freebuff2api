@@ -8,12 +8,191 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D20-green.svg)](package.json)
 [![Bun](https://img.shields.io/badge/bun-%3E%3D1.0-black.svg)](https://bun.sh)
 
-**OpenAI 兼容的 Freebuff 编码 API 反向代理**
 **OpenAI-compatible reverse proxy for the Freebuff coding API**
+**OpenAI 兼容的 Freebuff 编码 API 反向代理**
 
-[**中文**](#中文) · [**English**](#english)
+[**English**](#english) · [**中文**](#中文)
 
 </div>
+
+---
+
+# English
+
+OpenAI-compatible reverse proxy for the **Freebuff** coding API
+([freebuff.com](https://freebuff.com), the free AI coding agent). It exposes
+a standard OpenAI `/v1` surface and relays requests to the Freebuff backend
+using a free account's auth token — so any OpenAI-compatible client (Claude
+Code, Cline, LobeChat, curl, …) can drive Freebuff's free models.
+
+> 📖 Full documentation: [`docs/`](docs/README.md) (bilingual by directory,
+> semantically identical). English: [`docs/en/`](docs/en/README.md) —
+> Chinese: [`docs/zh/`](docs/zh/README.md). Debugging & analysis tools in
+> [`tools/`](tools/README.md).
+
+Zero runtime dependencies. Written in TypeScript for [Bun](https://bun.sh)
+(also runs on Node 22+ with `node --experimental-strip-types` or after
+`bun run build`).
+
+> This project was implemented against the live Freebuff backend protocol
+> (verified against the official
+> [`CodebuffAI/freebuff`](https://github.com/CodebuffAI/freebuff) client
+> source). It is a third-party tool, not affiliated with Freebuff. Free
+> access can be gated by the service at any time — use responsibly.
+
+## How it works
+
+Freebuff's free tier is session-gated. For every chat request the proxy:
+
+1. **Acquires a free session** — `POST /api/v1/freebuff/session` with your
+   token. If the service is under load it returns `queued` (the "waiting
+   room"); the proxy answers the client with `503` + `Retry-After` and keeps
+   polling so retries succeed.
+2. **Starts an agent run** — `POST /api/v1/agent-runs` (`action: START`) for
+   the agent that owns the requested model. Runs are reused across requests
+   and rotated/finished automatically.
+3. **Forwards the request** — `POST /api/v1/chat/completions` with your
+   OpenAI payload plus the `codebuff_metadata` block the backend expects
+   (`run_id`, `client_id`, `cost_mode: "free"`, `freebuff_instance_id`).
+   Streaming (SSE) passes straight through.
+
+   > **CLI gate (verified against the live backend):** the free-tier endpoint
+   > rejects requests that don't look like they came from the official CLI
+   > (`403 free_mode_cli_required`). The check is the **system message**: it
+   > must contain the exact phrase `You are Buffy, the strategic coding
+   > assistant` (the official agent's system-prompt opening). The proxy
+   > automatically prepends/merges this marker into the client's messages, so
+   > ordinary OpenAI clients don't need to know about it.
+4. **Rotates tokens** — with multiple `AUTH_TOKENS`, requests round-robin
+   across tokens; a token that gets rejected upstream (401) is cooled down for
+   30 minutes instead of poisoning every request.
+
+## Quick start
+
+```bash
+bun install
+
+# Option A (recommended): sign in with a device-code login flow.
+# Prints a URL to open in your browser; credentials are stored at
+# ~/.config/freebuff2api/credentials.json.
+bun run login
+
+# Option B: provide a token directly
+# export AUTH_TOKENS="<your freebuff.com token>"
+
+bun run dev        # or: bun run src/index.ts
+```
+
+```bash
+curl http://localhost:23333/v1/models
+curl http://localhost:23333/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+Point any OpenAI-compatible client at `http://localhost:23333/v1`.
+
+## Login
+
+`freebuff2api login` implements the same device-code login flow as the
+official Freebuff CLI (verified against the `CodebuffAI/freebuff` client
+source):
+
+1. `POST /api/auth/cli/code` with a persistent install fingerprint
+2. prints a one-time URL (`freebuff.com/login?auth_code=…`) to open in your
+   browser — no need to hand the token around manually
+3. polls `GET /api/auth/cli/status` until you complete the sign-in, then saves
+   the account record to `~/.config/freebuff2api/credentials.json`
+
+```bash
+bun run login                       # start login and wait for the browser sign-in
+bun run login -- --resume           # keep waiting on an interrupted login
+bun run login -- --force            # fresh login, ignoring saved credentials
+```
+
+The saved token is picked up automatically by the server when `AUTH_TOKENS`
+is not set. Use `--force` later to refresh it. (Login uses `LOGIN_BASE_URL`,
+which defaults to `https://freebuff.com`.)
+
+## Configuration
+
+General priority is **environment variables** → auto-detected `config.json` → saved
+`login` credentials → defaults. `HTTP_PROXY` is the exception: **`--http-proxy`
+CLI option > `config.json` > environment variable**.
+
+| Env var             | Default                   | Description                                             |
+| ------------------- | ------------------------- | ------------------------------------------------------- |
+| `AUTH_TOKENS`       | *(required*¹*)*           | Comma-separated Freebuff auth tokens                    |
+| `UPSTREAM_BASE_URL` | `https://www.codebuff.com`| Freebuff backend base URL                              |
+| `LOGIN_BASE_URL`    | `https://freebuff.com`    | Base URL used by `freebuff2api login`                   |
+| `LISTEN_ADDR`       | `:23333`                 | Listen address (`PORT` env wins in managed workspaces) |
+| `REQUEST_TIMEOUT`   | `15m`                     | Upstream request timeout (Go-style durations)          |
+| `ROTATION_INTERVAL` | `6h`                      | How long an agent run lives before rotation            |
+| `API_KEYS`          | *(empty = open)*          | Comma-separated keys clients must present to the proxy |
+| `HTTP_PROXY`        | *(empty)*                 | Optional upstream HTTP(S) proxy; `--http-proxy` > `config.json` > environment |
+| `MAX_BODY_SIZE`     | `16MB`                    | Maximum `/v1/chat/completions` body (16,000,000 bytes) |
+| `MAX_CONCURRENT_REQUESTS` | `32`                | Maximum concurrent chat requests                  |
+
+See [`config.example.json`](config.example.json) and [`env.example`](env.example).
+
+¹`AUTH_TOKENS` is required unless you have run `freebuff2api login`, in which
+case the saved credentials are used.
+
+The token is a freebuff.com account token (the same one your browser session
+uses). Keep it secret — it grants API usage on your account.
+
+## Endpoints
+
+| Method | Path                     | Description                                  |
+| ------ | ------------------------ | -------------------------------------------- |
+| GET    | `/healthz`               | Liveness, model registry + token state       |
+| GET    | `/v1/models`             | Models currently available in free mode      |
+| POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
+
+Models are kept in sync with the official client by fetching
+`CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
+keeps the proxy working if the fetch fails.
+
+## Development
+
+```bash
+bun run typecheck   # tsc -b --noEmit
+bun run build       # bundles to dist/index.js (node target; bin: freebuff2api)
+bun run start       # run the built bundle
+bun run login       # device-code login (see above)
+bun run check       # typecheck + build
+```
+
+## Documentation
+
+- [`docs/`](docs/README.md) — full documentation (bilingual by directory,
+  semantically identical): protocol reverse-engineering, the free-tier CLI
+  gate crack, e2e test records
+- [`docs/en/`](docs/en/README.md) — English documentation
+- [`docs/zh/`](docs/zh/README.md) — Chinese documentation
+- [`tools/`](tools/README.md) — debugging scripts (TLS MITM proxy, gate
+  discovery, replay, production-shape verification, per-model session/CLI
+  probes) and captured artifacts
+- [`docs/en/04-request-format-gate.md`](docs/en/04-request-format-gate.md) — **the core
+  finding**: how the free-tier gate works and the exact request format
+- [`docs/en/06-e2e-test-records.md`](docs/en/06-e2e-test-records.md) — stage 9:
+  dual-model re-verification (proxy + official CLI, MITM captured) and the
+  503 root-cause analysis
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report bugs / request features via
+[GitHub Issues](https://github.com/chenjh16/freebuff2api/issues).
+
+## License
+
+[MIT](LICENSE) © 2026 chenjh16
+
+## Roadmap / not yet implemented
+
+- Claude-compatible `/v1/messages` + `/v1/messages/count_tokens` endpoints
+- Tool-schema normalization for chat clients that emit complex JSON Schema
+- Per-key rate limiting / usage stats
 
 ---
 
@@ -75,13 +254,13 @@ bun run dev        # 或：bun run src/index.ts
 ```
 
 ```bash
-curl http://localhost:8080/v1/models
-curl http://localhost:8080/v1/chat/completions \
+curl http://localhost:23333/v1/models
+curl http://localhost:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-把任何 OpenAI 兼容客户端指向 `http://localhost:8080/v1` 即可。
+把任何 OpenAI 兼容客户端指向 `http://localhost:23333/v1` 即可。
 
 ## 登录
 
@@ -105,19 +284,21 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 
 ## 配置
 
-优先级：**环境变量** → `config.json`（工作目录自动检测）→ 登录凭证 →
-默认值。
+通用配置优先级：**环境变量** → `config.json`（工作目录自动检测）→ 登录凭证 → 默认值。
+`HTTP_PROXY` 例外按 **命令行参数 `--http-proxy` > `config.json` > 环境变量** 解析。
 
 | 环境变量             | 默认值                       | 说明                                        |
 | ------------------- | ---------------------------- | ------------------------------------------- |
 | `AUTH_TOKENS`       | *(必需¹)*                    | 逗号分隔的 Freebuff auth token              |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com`   | Freebuff 后端地址                           |
 | `LOGIN_BASE_URL`    | `https://freebuff.com`       | `freebuff2api login` 使用的 base URL        |
-| `LISTEN_ADDR`       | `:8080`                      | 监听地址（托管环境以 `PORT` 优先）           |
+| `LISTEN_ADDR`       | `:23333`                    | 监听地址（托管环境以 `PORT` 优先）           |
 | `REQUEST_TIMEOUT`   | `15m`                        | 上游请求超时（Go 风格时长）                 |
 | `ROTATION_INTERVAL` | `6h`                         | run 轮换间隔                                |
 | `API_KEYS`          | *(空 = 开放)*                | 客户端访问本代理需携带的 key                 |
-| `HTTP_PROXY`        | *(空)*                       | 可选的上游 HTTP(S) 代理（Bun 原生支持）     |
+| `HTTP_PROXY`        | *(空)*                       | 可选的上游 HTTP(S) 代理；优先级为 `--http-proxy` > `config.json` > 环境变量 |
+| `MAX_BODY_SIZE`     | `16MB`                       | `/v1/chat/completions` 请求体上限（16,000,000 字节） |
+| `MAX_CONCURRENT_REQUESTS` | `32`                   | 最大并发 chat 请求数                         |
 
 参见 [`config.example.json`](config.example.json) 与
 [`env.example`](env.example)。
@@ -156,9 +337,11 @@ bun run check       # typecheck + build
 - [`docs/zh/`](docs/zh/README.md) — 中文文档
 - [`docs/en/`](docs/en/README.md) — English documentation
 - [`tools/`](tools/README.md) — 调试脚本（TLS MITM 代理、网关探索、重放、
-  生产形状验证）与抓包产物
+  生产形状验证、逐模型会话/CLI 探针）与抓包产物
 - [`docs/zh/04-请求格式破解.md`](docs/zh/04-请求格式破解.md) — **核心发现**：
   免费档网关机制与正确请求格式
+- [`docs/zh/06-端到端测试记录.md`](docs/zh/06-端到端测试记录.md) — 阶段 9：
+  双模型复测（代理 + 官方 CLI，MITM 抓包）与 503 根因分析
 
 ## 贡献
 
@@ -174,175 +357,3 @@ bun run check       # typecheck + build
 - Claude 兼容的 `/v1/messages` + `/v1/messages/count_tokens` 端点
 - 面向发出复杂 JSON Schema 的 chat 客户端的工具 schema 归一化
 - 按 key 的限流 / 用量统计
-
----
-
-# English
-
-OpenAI-compatible reverse proxy for the **Freebuff** coding API
-([freebuff.com](https://freebuff.com), the free AI coding agent). It exposes
-a standard OpenAI `/v1` surface and relays requests to the Freebuff backend
-using a free account's auth token — so any OpenAI-compatible client (Claude
-Code, Cline, LobeChat, curl, …) can drive Freebuff's free models.
-
-> 📖 Full documentation: [`docs/`](docs/README.md) (bilingual by directory,
-> semantically identical). Chinese: [`docs/zh/`](docs/zh/README.md) —
-> English: [`docs/en/`](docs/en/README.md). Debugging & analysis tools in
-> [`tools/`](tools/README.md).
-
-Zero runtime dependencies. Written in TypeScript for [Bun](https://bun.sh)
-(also runs on Node 22+ with `node --experimental-strip-types` or after
-`bun run build`).
-
-> This project was implemented against the live Freebuff backend protocol
-> (verified against the official
-> [`CodebuffAI/freebuff`](https://github.com/CodebuffAI/freebuff) client
-> source). It is a third-party tool, not affiliated with Freebuff. Free
-> access can be gated by the service at any time — use responsibly.
-
-## How it works
-
-Freebuff's free tier is session-gated. For every chat request the proxy:
-
-1. **Acquires a free session** — `POST /api/v1/freebuff/session` with your
-   token. If the service is under load it returns `queued` (the "waiting
-   room"); the proxy answers the client with `503` + `Retry-After` and keeps
-   polling so retries succeed.
-2. **Starts an agent run** — `POST /api/v1/agent-runs` (`action: START`) for
-   the agent that owns the requested model. Runs are reused across requests
-   and rotated/finished automatically.
-3. **Forwards the request** — `POST /api/v1/chat/completions` with your
-   OpenAI payload plus the `codebuff_metadata` block the backend expects
-   (`run_id`, `client_id`, `cost_mode: "free"`, `freebuff_instance_id`).
-   Streaming (SSE) passes straight through.
-
-   > **CLI gate (verified against the live backend):** the free-tier endpoint
-   > rejects requests that don't look like they came from the official CLI
-   > (`403 free_mode_cli_required`). The check is the **system message**: it
-   > must contain the exact phrase `You are Buffy, the strategic coding
-   > assistant` (the official agent's system-prompt opening). The proxy
-   > automatically prepends/merges this marker into the client's messages, so
-   > ordinary OpenAI clients don't need to know about it.
-4. **Rotates tokens** — with multiple `AUTH_TOKENS`, requests round-robin
-   across tokens; a token that gets rejected upstream (401) is cooled down for
-   30 minutes instead of poisoning every request.
-
-## Quick start
-
-```bash
-bun install
-
-# Option A (recommended): sign in with a device-code login flow.
-# Prints a URL to open in your browser; credentials are stored at
-# ~/.config/freebuff2api/credentials.json.
-bun run login
-
-# Option B: provide a token directly
-# export AUTH_TOKENS="<your freebuff.com token>"
-
-bun run dev        # or: bun run src/index.ts
-```
-
-```bash
-curl http://localhost:8080/v1/models
-curl http://localhost:8080/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
-```
-
-Point any OpenAI-compatible client at `http://localhost:8080/v1`.
-
-## Login
-
-`freebuff2api login` implements the same device-code login flow as the
-official Freebuff CLI (verified against the `CodebuffAI/freebuff` client
-source):
-
-1. `POST /api/auth/cli/code` with a persistent install fingerprint
-2. prints a one-time URL (`freebuff.com/login?auth_code=…`) to open in your
-   browser — no need to hand the token around manually
-3. polls `GET /api/auth/cli/status` until you complete the sign-in, then saves
-   the account record to `~/.config/freebuff2api/credentials.json`
-
-```bash
-bun run login                       # start login and wait for the browser sign-in
-bun run login -- --resume           # keep waiting on an interrupted login
-bun run login -- --force            # fresh login, ignoring saved credentials
-```
-
-The saved token is picked up automatically by the server when `AUTH_TOKENS`
-is not set. Use `--force` later to refresh it. (Login uses `LOGIN_BASE_URL`,
-which defaults to `https://freebuff.com`.)
-
-## Configuration
-
-Priority: **environment variables** → `config.json` (auto-detected in the
-working directory) → saved `login` credentials → defaults.
-
-| Env var             | Default                   | Description                                             |
-| ------------------- | ------------------------- | ------------------------------------------------------- |
-| `AUTH_TOKENS`       | *(required*¹*)*           | Comma-separated Freebuff auth tokens                    |
-| `UPSTREAM_BASE_URL` | `https://www.codebuff.com`| Freebuff backend base URL                              |
-| `LOGIN_BASE_URL`    | `https://freebuff.com`    | Base URL used by `freebuff2api login`                   |
-| `LISTEN_ADDR`       | `:8080`                   | Listen address (`PORT` env wins in managed workspaces) |
-| `REQUEST_TIMEOUT`   | `15m`                     | Upstream request timeout (Go-style durations)          |
-| `ROTATION_INTERVAL` | `6h`                      | How long an agent run lives before rotation            |
-| `API_KEYS`          | *(empty = open)*          | Comma-separated keys clients must present to the proxy |
-| `HTTP_PROXY`        | *(empty)*                 | Optional upstream HTTP(S) proxy (Bun honors natively)  |
-
-See [`config.example.json`](config.example.json) and [`env.example`](env.example).
-
-¹`AUTH_TOKENS` is required unless you have run `freebuff2api login`, in which
-case the saved credentials are used.
-
-The token is a freebuff.com account token (the same one your browser session
-uses). Keep it secret — it grants API usage on your account.
-
-## Endpoints
-
-| Method | Path                     | Description                                  |
-| ------ | ------------------------ | -------------------------------------------- |
-| GET    | `/healthz`               | Liveness, model registry + token state       |
-| GET    | `/v1/models`             | Models currently available in free mode      |
-| POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
-
-Models are kept in sync with the official client by fetching
-`CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
-keeps the proxy working if the fetch fails.
-
-## Development
-
-```bash
-bun run typecheck   # tsc -b --noEmit
-bun run build       # bundles to dist/index.js (node target; bin: freebuff2api)
-bun run start       # run the built bundle
-bun run login       # device-code login (see above)
-bun run check       # typecheck + build
-```
-
-## Documentation
-
-- [`docs/`](docs/README.md) — full documentation (bilingual by directory,
-  semantically identical): protocol reverse-engineering, the free-tier CLI
-  gate crack, e2e test records
-- [`docs/zh/`](docs/zh/README.md) — Chinese documentation
-- [`docs/en/`](docs/en/README.md) — English documentation
-- [`tools/`](tools/README.md) — debugging scripts (TLS MITM proxy, gate
-  discovery, replay, production-shape verification) and captured artifacts
-- [`docs/zh/04-请求格式破解.md`](docs/zh/04-请求格式破解.md) — **the core
-  finding**: how the free-tier gate works and the exact request format
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). Report bugs / request features via
-[GitHub Issues](https://github.com/chenjh16/freebuff2api/issues).
-
-## License
-
-[MIT](LICENSE) © 2026 chenjh16
-
-## Roadmap / not yet implemented
-
-- Claude-compatible `/v1/messages` + `/v1/messages/count_tokens` endpoints
-- Tool-schema normalization for chat clients that emit complex JSON Schema
-- Per-key rate limiting / usage stats

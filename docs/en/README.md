@@ -44,6 +44,14 @@ The helper scripts used during reverse-engineering and verification live in
 ## Verification status
 
 - ✅ `bun run typecheck` (tsc -b --noEmit) passes
+- ✅ 82 unit tests pass (`bun test tests/unit`) covering config, models, runs,
+  session admission (409/503/429 classification), and the server surface
 - ✅ Real-account login (device-code flow)
 - ✅ End-to-end tests: streaming and non-streaming chat both return 200 with
   real answers
+- ✅ Dual-model re-verification (`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`)
+  through the proxy and the official CLI (MITM-captured) — see
+  [06 - E2E Test Records](06-e2e-test-records.md) stage 9
+- 🔧 Debugging tools: [`tools/`](../../tools/README.md) (TLS MITM proxy,
+  `probe-session.mjs` admission probe, `cli-probe.mjs` official-CLI driver,
+  `model-availability.mjs` per-model probe)

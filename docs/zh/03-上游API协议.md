@@ -38,8 +38,9 @@ POST /api/v1/freebuff/session
 Authorization: Bearer <token>
 User-Agent: Bun/1.3.14
 x-freebuff-model: deepseek/deepseek-v4-flash   # 可选，指定模型
-Content-Type: application/json
-body: {}                                        # 官方 CLI 发空 body；"{}" 亦可
+
+# 官方 CLI 不发送请求体，也不依赖显式 Accept；代理应保持空 body
+body: <empty>
 ```
 
 成功（`status: active`）：
@@ -64,11 +65,33 @@ body: {}                                        # 官方 CLI 发空 body；"{}" 
 （需重新创建）、`country_blocked`/`banned`（403）、`model_locked`/
 `model_unavailable`（409）、429（限流）。
 
+> 404 语义：官方 CLI 把 404 映射为 `{status: "none"}`（免费档不可用），
+> freebuff2api 映射为 `{status: "disabled"}` —— 两者都会停止轮询。
+
+模型被锁定（`409`，实测——一个账号同时只有一个固定模型的一小时 session）：
+
+```json
+{
+  "status": "model_locked",
+  "currentModel": "openai/gpt-5.6-luna",       // 当前 session 固定的模型
+  "requestedModel": "deepseek/deepseek-v4-flash", // 本次请求的模型
+  "accessTier": "full"
+}
+```
+
+> 官方 CLI 对 `model_locked` 的处理（来自其打包源码）：用户切换模型时先
+> `DELETE` 当前 session 再重新 `POST`（自动切换）；DELETE 失败则提示运行
+> `/end-session`。它还对 session POST 的 `408/429/503` 做指数退避重试
+> （基准 20s、上限 300s），其余 4xx 直接停止。freebuff2api 会上抛 `409
+> model_locked`（带锁定模型名），并把其他准入失败（`429`/`500`/`503`/`401`）
+> 连同真实状态码、`Retry-After` 与消息透传，不再屏蔽为笼统 503。
+
 ### 轮询等待室
 
 ```
 GET /api/v1/freebuff/session
 x-freebuff-instance-id: <instanceId>
+x-freebuff-compact-session: 1
 User-Agent: Bun/1.3.14
 ```
 
@@ -168,4 +191,10 @@ Accept: */*
 | 403 `free_mode_cli_required` | 缺少 CLI system 标记 | 注入标记后重试 |
 | 403 `free_mode_invalid_agent_hierarchy` | run agent 与 model 不匹配 | 修正 agentId |
 | 429 | 限流 | 按 Retry-After 返回 |
+| 409 `model_unavailable` / `model_locked` | 当前模型无法入场或被锁定 | 保留 409 与错误 code，不伪装成 503 |
 | 503 | 等待室 / 无健康令牌 | 带 Retry-After 返回 |
+
+会话准入（`POST /api/v1/freebuff/session`）失败语义：`409
+model_unavailable` / `model_locked` 对该模型是终态——保留 409 与 `error.code`
+（绝不循环刷新成超时或笼统 503）；其余状态（`429`、`401`、`500`、`503`）
+连同 `Retry-After` 与上游消息透传，便于客户端像官方 CLI 一样重试。

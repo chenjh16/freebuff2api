@@ -28,6 +28,9 @@
 | `discover-gate.mjs` | 免费模式网关二分探索（破解 free_mode_cli_required） | 是 |
 | `replay-captured.mjs` | 重放官方 CLI 捕获请求（细粒度 system 变体） | 是 |
 | `prodlike-test.mjs` | 验证代理注入后的请求形状（流式 + 非流式） | 是 |
+| `probe-session.mjs` | 逐模型会话准入探针（`--admit-only` 不耗 chat 额度） | 视模式 |
+| `cli-probe.mjs` | PTY 驱动官方 CLI 最小对话（可选 MITM 抓包） | 是（1 次 chat） |
+| `model-availability.mjs` | 读取 `/v1/models` 后逐模型最小 chat 探测（并发受限） | 是（每模型 1 次） |
 | `captured/` | 官方 CLI 捕获产物（请求 body、Agent 定义） | — |
 
 ---
@@ -119,7 +122,55 @@ node tools/prodlike-test.mjs
 
 **建议在修改了 `injectCliSystemMarker` 或 `upstream.ts` 后跑一次做回归。**
 
-## 7. captured/ — 官方 CLI 捕获产物
+## 7. probe-session.mjs — 逐模型会话准入探针
+
+在不消耗 chat 额度的前提下确认某个模型当前能否被准入，并观察"账户已持有
+另一个模型会话"时上游的真实响应（这正是 1 小时 session 固定模型约束下的
+关键诊断步骤，见 [docs/zh/06-端到端测试记录.md](../docs/zh/06-端到端测试记录.md)
+阶段 9）。
+
+```bash
+node tools/probe-session.mjs --delete                # 释放会话槽位
+node tools/probe-session.mjs openai/gpt-5.6-luna --admit-only   # 只探测准入（0 chat 额度）
+node tools/probe-session.mjs deepseek/deepseek-v4-flash        # 全链路：session→run→chat
+```
+
+## 8. cli-probe.mjs — 官方 CLI 最小对话探针（无 TTY 环境）
+
+在 Daytona 等无可用 TTY（tmux 助手不可写 `/tmp`）的执行器里，用
+`script`（util-linux）伪造 PTY 驱动官方 `freebuff` CLI 的 TUI，发送一条
+最小消息，并可选在 `tools/mitm-ssl-proxy.mjs` 下运行以抓取全部请求。
+
+```bash
+node tools/cli-probe.mjs --model deepseek/deepseek-v4-flash --mitm
+node tools/cli-probe.mjs --model openai/gpt-5.6-luna --mitm --out /tmp/luna
+```
+
+要点：
+
+- 模型由 `~/.config/manicode/settings.json` 的 `freebuffModel` 决定；首次启动
+  CLI 会弹出模型选择器，脚本会自动按 Enter 选中高亮模型再发消息。
+- 产物：`<out>.tui.log`（TUI 原始输出）、`<out>.mitm.log`（MITM 抓包）。
+- 会真实消耗 1 次目标模型的 chat 额度。
+
+## 9. model-availability.mjs — 模型可用性全面探测
+
+先读取代理的 `/v1/models`，再逐个发送最小 chat 请求并输出每个模型的
+HTTP 状态、延迟和有限长度的错误摘要。默认最多 3 个并发，避免一次性压垮
+免费额度；每个模型仍可能消耗一次上游额度。
+
+```bash
+node tools/model-availability.mjs --help
+node tools/model-availability.mjs --base-url http://127.0.0.1:23333/v1
+node tools/model-availability.mjs --concurrency 2 --json > model-results.json
+node tools/model-availability.mjs --models deepseek/deepseek-v4-flash,openai/gpt-5.6-luna
+```
+
+如代理配置了 `API_KEYS`，使用 `--api-key` 或 `FB2API_API_KEY`；脚本不会输出
+凭证。只查看模型映射而不消耗额度时，请直接调用 `GET /v1/models`，不要运行
+chat 探测。
+
+## 10. captured/ — 官方 CLI 捕获产物
 
 | 文件 | 内容 | 用途 |
 | ---- | ---- | ---- |
@@ -134,6 +185,16 @@ node -e "const j=require('./tools/captured/agentdefs-full.json'); \
   console.log(JSON.stringify(j.agentDefinitions.find(d=>d.id==='base2-free-deepseek-flash'),null,1).slice(0,1500))"
 ```
 
+## 模型支持与 API 验收
+
+代理会在启动时从官方 `free-agents.ts` 同步 Agent→模型映射；网络失败时使用
+`src/models.ts` 的内置兜底列表。`GET /v1/models` 是当前广告列表，不能单独
+证明每个模型此刻有可用会话，因此应使用上面的探测脚本做显式可用性检查。
+
+自动化测试默认只运行单元测试；真实 API 检查需显式设置凭证并运行
+`bun test tests/e2e --timeout 120000`。模型全面检查是 opt-in：
+`LIVE_MODEL_TEST=1 bun test tests/e2e/model-availability.test.ts --timeout 180000`。
+
 ## MITM 抓包流程（速览）
 
 ```bash
@@ -147,6 +208,19 @@ freebuff
 
 # 在 CLI 里发一条消息 → 终端 1 打印全部请求（token 脱敏）
 ```
+
+模型对比注意事项：
+
+- 官方 CLI 当前没有 `--model` 参数；模型由 TUI 的模型选择器和
+  `~/.config/manicode/settings.json` 的 `freebuffModel` 偏好管理。
+- `openai/gpt-5.6-luna` 必须对应 `base2-free-luna`；
+  `deepseek/deepseek-v4-flash` 必须对应 `base2-free-deepseek-flash`。
+- 一个账号只能有一个活动 session，且 session 固定模型。比较两个模型时，
+  必须先退出/结束旧 session，再分别抓包；不要在同一 session 中切换模型。
+- 抓包摘要应只保留 method/path/status、模型、Agent、header 名和 body 结构；
+  不要把 Authorization、Cookie、完整 prompt、响应正文或原始抓包提交到仓库。
+- 若 Daytona/tmux 执行器不能创建 `/tmp` 辅助脚本，这属于执行器问题，不是
+  代理 503；请改用可写临时目录和真实 TTY 后重试。
 
 完整步骤、解读要点、故障排查见 [MITM使用指南.md](MITM使用指南.md)；
 抓到的请求样本见 [captured/mitm-抓包实录.md](captured/mitm-抓包实录.md)。

@@ -75,7 +75,7 @@ describe("createOrRefreshSession", () => {
     expect(req.headers.authorization).toBe("Bearer tok");
     expect(req.headers["user-agent"]).toBe(CLI_USER_AGENT);
     expect(req.headers["x-freebuff-model"]).toBe("deepseek/deepseek-v4-flash");
-    expect(JSON.parse(req.body)).toEqual({});
+    expect(req.body).toBe("");
   });
 
   test("maps 404 to status disabled", async () => {
@@ -106,6 +106,29 @@ describe("createOrRefreshSession", () => {
     expect((error as UpstreamError).errorCode).toBe("boom");
   });
 
+  test("falls back to status for the error code when there is no message", async () => {
+    setRoute("POST", "/api/v1/freebuff/session", () => json(503, { status: "capacity" }));
+    const error = await client.createOrRefreshSession("tok").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UpstreamError);
+    expect((error as UpstreamError).statusCode).toBe(503);
+    expect((error as UpstreamError).errorCode).toBe("capacity");
+  });
+
+  test("keeps currentModel/requestedModel from 409 model_locked responses", async () => {
+    setRoute("POST", "/api/v1/freebuff/session", () =>
+      json(409, {
+        status: "model_locked",
+        currentModel: "openai/gpt-5.6-luna",
+        requestedModel: "deepseek/deepseek-v4-flash",
+        accessTier: "full",
+      }),
+    );
+    const session = await client.createOrRefreshSession("tok");
+    expect(session.status).toBe("model_locked");
+    expect(session.currentModel).toBe("openai/gpt-5.6-luna");
+    expect(session.requestedModel).toBe("deepseek/deepseek-v4-flash");
+  });
+
   test("throws when the response is not JSON", async () => {
     setRoute("POST", "/api/v1/freebuff/session", () => ({ status: 200, body: "definitely not json" }));
     const error = await client.createOrRefreshSession("tok").catch((e: unknown) => e);
@@ -120,6 +143,7 @@ describe("getSession / endSession", () => {
     expect(session.instanceId).toBe("inst-1");
     expect(captured[0].method).toBe("GET");
     expect(captured[0].headers["x-freebuff-instance-id"]).toBe("inst-9");
+    expect(captured[0].headers["x-freebuff-compact-session"]).toBe("1");
   });
 
   test("endSession tolerates 404", async () => {

@@ -105,7 +105,7 @@ the gate — the proxy injects the marker automatically.
 ## Post-fix end-to-end verification
 
 ```bash
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
 ```
