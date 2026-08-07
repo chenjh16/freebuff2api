@@ -238,6 +238,8 @@ function isRetryableSessionFailure(error: unknown): boolean {
  */
 export class TokenManager {
   private pools: SessionPool[] = [];
+  /** Lazily-created pools for caller-provided tokens (hosted web login flow). */
+  private userPools = new Map<string, SessionPool>();
   private cooldownUntil = new Map<string, number>();
   private cooldownReason = new Map<string, string>();
   private nextIndex = 0;
@@ -307,6 +309,39 @@ export class TokenManager {
     throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "no upstream token available"));
   }
 
+  /**
+   * Acquire an upstream session for a caller-provided token (hosted web login
+   * flow), bypassing the env-token pool. The SessionPool is created lazily per
+   * token and shares the cooldown map, so a 401 cools the token down the same
+   * way pool tokens do.
+   */
+  async acquireUserSession(
+    token: string,
+    model?: string,
+    signal?: AbortSignal,
+  ): Promise<{ pool: SessionPool; instanceId: string | null }> {
+    let pool = this.userPools.get(token);
+    if (!pool) {
+      pool = new SessionPool(token, this.client, this.log);
+      this.userPools.set(token, pool);
+    }
+    const until = this.cooldownUntil.get(token) ?? 0;
+    if (until > Date.now()) {
+      throw new Error(
+        `upstream token is on cooldown${this.cooldownReason.get(token) ? ` (${this.cooldownReason.get(token)})` : ""} until ${new Date(until).toISOString()}`,
+      );
+    }
+    try {
+      const instanceId = await pool.ensureSession(model, signal);
+      return { pool, instanceId };
+    } catch (error) {
+      if (error instanceof UpstreamError && error.statusCode === 401) {
+        this.cooldown(token, TOKEN_COOLDOWN_MS, "upstream auth rejected token");
+      }
+      throw error;
+    }
+  }
+
   /** Cooldown a token after an auth failure. */
   cooldown(token: string, ms: number, reason: string): void {
     this.cooldownUntil.set(token, Date.now() + ms);
@@ -315,17 +350,20 @@ export class TokenManager {
   }
 
   invalidateSession(token: string, reason: string): void {
-    const pool = this.pools.find((p) => p.token === token);
+    const pool = this.pools.find((p) => p.token === token) ?? this.userPools.get(token);
     pool?.invalidate(reason);
   }
 
   async endAll(signal?: AbortSignal): Promise<void> {
-    await Promise.allSettled(this.pools.map((pool) => pool.end(signal)));
+    await Promise.allSettled([
+      ...this.pools.map((pool) => pool.end(signal)),
+      ...[...this.userPools.values()].map((pool) => pool.end(signal)),
+    ]);
   }
 
   snapshots(): Record<string, SessionSnapshot> {
     const out: Record<string, SessionSnapshot> = {};
-    for (const pool of this.pools) {
+    for (const pool of [...this.pools, ...this.userPools.values()]) {
       const snapshot = pool.snapshot();
       snapshot.lastError = snapshot.lastError ?? this.cooldownReason.get(pool.token) ?? null;
       out[tokenLabel(pool.token)] = snapshot;

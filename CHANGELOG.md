@@ -14,6 +14,14 @@
 
 ### Added
 
+- **网页登录 + 每用户 API Key**：主页改为 freebuff.com 风格登录页，设备码
+  登录（`/api/auth/start|status|register|revoke`）成功后自动签发 `sk-fb-*`
+  key（AES-256-GCM 加密账号 token，`PROXY_SECRET` 派生密钥，无状态、可跨
+  重启）；登录后进入 API Key 管理页（BaseURL + Windows/UNIX curl 一键复制
+  + Toast）、模型测试（流式 + Thinking 输出）与退出登录（弹窗确认并吊销
+  key）。`TokenManager.acquireUserSession` 支持按请求使用用户自己的上游
+  token；托管模式下 `AUTH_TOKENS` 变为可选；`PROXY_SECRET` 固定值可让 key
+  跨重新部署保持有效
 - **托管部署（Next.js App Router）**：新增 `app/` 路由处理器
   （`/healthz`、`/v1/models`、`/v1/chat/completions`）与在线控制台首页，
   通过 `src/handler.ts` 与 CLI 服务器共享完全相同的请求处理路径；
@@ -26,7 +34,8 @@
 - `/healthz` 恒为公开端点（不受代理 key 鉴权），托管健康检查与状态探测
   始终可用；只有 `/v1/*` 才要求 `Authorization`/`x-api-key`
 - 单元测试 `tests/unit/web-proxy.test.ts`：默认 key 解析、CORS 预检、
-  未配置 handler 行为
+  未配置 handler 行为；`tests/unit/account.test.ts`（sk-fb-* key 加解密/
+  吊销）与 server 用户 key 流程测试
 - 文档：docs 08 托管部署指南（中英）、README 托管部署章节；
   `dev` 脚本改为 Next.js 应用（`dev:cli` 运行独立代理）
 

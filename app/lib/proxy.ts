@@ -8,20 +8,26 @@
  *   GET  /healthz               liveness + token/session state
  *   GET  /v1/models             available free models
  *   POST /v1/chat/completions   OpenAI chat completions → Freebuff backend
+ *   POST /api/auth/start        start a device-code login (web login flow)
+ *   GET  /api/auth/status       poll the login status
+ *   POST /api/auth/register     validate the account token, mint an API key
+ *   POST /api/auth/revoke       revoke an API key (logout)
  *
- * Environment (hosted deployment):
- *   AUTH_TOKENS   Freebuff auth tokens (REQUIRED for the proxy to serve chats)
- *   API_KEYS      keys clients must present; defaults to sk-freebuff2api-2026
- *                 when unset so the public endpoint is never left open.
- *   All other config options from `src/config.ts` apply as usual.
+ * Two ways to get upstream tokens:
+ *   - `AUTH_TOKENS` env (or `freebuff2api login` credentials on a machine)
+ *     feeds the shared token pool — requests whose key is in `API_KEYS` use it.
+ *   - the web login flow mints `sk-fb-…` keys that resolve to the logged-in
+ *     user's own freebuff.com token (`resolveApiKeyToken`), so no account
+ *     token ever has to be shared by everyone.
  */
 
 import { createHandler } from "../../src/handler.ts";
-import { loadConfig } from "../../src/config.ts";
+import { loadConfig, type Config } from "../../src/config.ts";
 import { UpstreamClient } from "../../src/upstream.ts";
 import { ModelRegistry } from "../../src/models.ts";
 import { TokenManager } from "../../src/session.ts";
 import { RunManager } from "../../src/runs.ts";
+import { resolveApiKeyToken } from "./account.ts";
 
 /** Default proxy API key used by the hosted deployment when API_KEYS is unset. */
 export const DEFAULT_API_KEYS = ["sk-freebuff2api-2026"];
@@ -57,12 +63,41 @@ export function getHandler(): Promise<(request: Request) => Promise<Response>> {
   return handlerPromise;
 }
 
+/**
+ * Shared runtime: config (token-optional — the web login flow serves requests
+ * with per-user tokens even when AUTH_TOKENS is unset) plus an UpstreamClient.
+ * Cached per process; used by both the proxy handler and the /api/auth routes.
+ */
+let runtimePromise: Promise<{ cfg: Config; client: UpstreamClient }> | null = null;
+
+export function getRuntime(): Promise<{ cfg: Config; client: UpstreamClient }> {
+  if (!runtimePromise) {
+    runtimePromise = (async () => {
+      // Hosted default: protect the public endpoint with the deploy API key
+      // when API_KEYS is not explicitly configured. An explicit env value
+      // wins. requireToken:false keeps the site functional in per-user
+      // (web-login) mode even with no AUTH_TOKENS.
+      const cfg = loadConfig({
+        requireToken: false,
+        ...(process.env.API_KEYS?.trim() ? {} : { apiKeys: DEFAULT_API_KEYS }),
+      });
+      const client = new UpstreamClient({
+        baseURL: cfg.upstreamBaseURL,
+        requestTimeoutMs: cfg.requestTimeoutMs,
+        userAgent: cfg.userAgent,
+        actingUserId: cfg.actingUserId,
+      });
+      return { cfg, client };
+    })();
+  }
+  return runtimePromise;
+}
+
 async function buildHandler(): Promise<(request: Request) => Promise<Response>> {
-  let cfg;
+  let cfg: Config;
+  let client: UpstreamClient;
   try {
-    // Hosted default: protect the public endpoint with the deploy API key when
-    // API_KEYS is not explicitly configured. An explicit env value wins.
-    cfg = loadConfig(process.env.API_KEYS?.trim() ? {} : { apiKeys: DEFAULT_API_KEYS });
+    ({ cfg, client } = await getRuntime());
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log(`proxy not configured: ${message}`);
@@ -76,28 +111,30 @@ async function buildHandler(): Promise<(request: Request) => Promise<Response>> 
     process.env.HTTPS_PROXY = cfg.httpProxy;
   }
 
-  const client = new UpstreamClient({
-    baseURL: cfg.upstreamBaseURL,
-    requestTimeoutMs: cfg.requestTimeoutMs,
-    userAgent: cfg.userAgent,
-    actingUserId: cfg.actingUserId,
-  });
   const registry = new ModelRegistry(fetch, log);
   await registry.start();
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
   log(
-    `web handler ready: upstream=${cfg.upstreamBaseURL} tokens=${cfg.authTokens.length} ` +
-      `apiKeys=${cfg.apiKeys.length > 0 ? "required" : "open"}`,
+    `web handler ready: upstream=${cfg.upstreamBaseURL} poolTokens=${cfg.authTokens.length} ` +
+      `apiKeys=${cfg.apiKeys.length > 0 ? "required" : "open"} webLogin=sk-fb-keys`,
   );
-  return createHandler({ cfg, client, registry, tokens, runs, log });
+  return createHandler({
+    cfg,
+    client,
+    registry,
+    tokens,
+    runs,
+    log,
+    resolveTokenForApiKey: resolveApiKeyToken,
+  });
 }
 
 /**
- * Handler used while the proxy has no configured auth tokens. /healthz stays
- * alive (200, configured: false) so hosting health probes and the landing page
- * can tell "deploy is up" from "proxy needs AUTH_TOKENS"; everything else
- * returns a clear 503.
+ * Handler used while the proxy has no usable configuration. /healthz stays
+ * alive (200, configured: false) so hosting health probes and the landing
+ * page can tell "deploy is up" from "proxy needs configuration"; everything
+ * else returns a clear 503.
  */
 export function unconfiguredHandler(message: string): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
@@ -108,7 +145,7 @@ export function unconfiguredHandler(message: string): (request: Request) => Prom
           ok: false,
           configured: false,
           error: message,
-          hint: "Set AUTH_TOKENS (your freebuff.com account token — get it with `freebuff2api login`; this is NOT the proxy API key) in the deployment environment, then redeploy.",
+          hint: "Check UPSTREAM_BASE_URL / LOGIN_BASE_URL in the deployment environment.",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -158,7 +195,7 @@ export function configErrorResponse(message: string): Response {
   return new Response(
     JSON.stringify({
       error: {
-        message: `proxy is not configured: ${message}. Set AUTH_TOKENS (and optionally API_KEYS) in the deploy environment.`,
+        message: `proxy is not configured: ${message}. Check the deployment environment.`,
         type: "server_error",
       },
     }),

@@ -255,6 +255,47 @@ export class UpstreamClient {
     });
   }
 
+  /**
+   * Fetch the current user for a token (`GET /api/v1/me`). Used by the hosted
+   * web login flow to validate an account token before minting an API key.
+   */
+  async me(
+    token: string,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<{ id?: string; name?: string; email?: string }> {
+    // The upstream /api/v1/me only accepts a fixed set of fields (verified
+    // live: id, email, discord_id, stripe_customer_id, banned, ...) — name is
+    // not among them.
+    const resp = await this.request("GET", "/api/v1/me?fields=id,email", token, {
+      headers: { Accept: "application/json", "User-Agent": CLI_USER_AGENT },
+      signal: opts.signal,
+    });
+    const body = await resp.text();
+    if (resp.status < 200 || resp.status >= 300) {
+      throw new UpstreamError(
+        `me request failed with status ${resp.status}: ${body.slice(0, 300)}`,
+        resp.status,
+        undefined,
+        undefined,
+        body,
+      );
+    }
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      // Fall through.
+    }
+    if (!parsed) {
+      throw new UpstreamError(`me response was not JSON: ${body.slice(0, 300)}`, resp.status);
+    }
+    return {
+      id: typeof parsed.id === "string" ? parsed.id : undefined,
+      name: typeof parsed.name === "string" ? parsed.name : undefined,
+      email: typeof parsed.email === "string" ? parsed.email : undefined,
+    };
+  }
+
   private async parseSessionResponse(resp: Response, method: string): Promise<FreebuffSessionResponse> {
     const body = await resp.text();
     const retryAfterMs = parseRetryAfterMs(resp.headers.get("Retry-After"));

@@ -13,6 +13,7 @@ const MODEL = "deepseek/deepseek-v4-flash";
 interface FullHarness {
   base: string;
   bodies: string[];
+  tokensUsed: string[];
   chatCalls: () => number;
   invalidations: () => number;
   start: () => Promise<{ base: string; server: Server }>;
@@ -25,6 +26,8 @@ function makeFullHarness(opts: {
   maxConcurrentRequests?: number;
   chatHandler?: (body: string, call: number) => Response | Promise<Response>;
   acquireSession?: () => Promise<{ pool: { token: string }; instanceId: string | null }>;
+  acquireUserSession?: (token: string) => Promise<{ pool: { token: string }; instanceId: string | null }>;
+  resolveTokenForApiKey?: (apiKey: string) => string | undefined;
 } = {}): FullHarness {
   const cfg = {
     listenAddr: ":0",
@@ -42,13 +45,15 @@ function makeFullHarness(opts: {
   } as Config;
 
   const bodies: string[] = [];
+  const tokensUsed: string[] = [];
   let calls = 0;
   let invalidations = 0;
 
   const client = {
-    chatCompletions: async (_token: string, body: string) => {
+    chatCompletions: async (token: string, body: string) => {
       calls += 1;
       bodies.push(body);
+      tokensUsed.push(token);
       if (opts.chatHandler) return opts.chatHandler(body, calls);
       return new Response('{"id":"x","choices":[{"message":{"role":"assistant","content":"hi"}}]}', {
         status: 200,
@@ -65,6 +70,9 @@ function makeFullHarness(opts: {
 
   const tokens = {
     acquireSession: opts.acquireSession ?? (async () => ({ pool: { token: "t1" }, instanceId: "inst-1" })),
+    acquireUserSession:
+      opts.acquireUserSession ??
+      (async (token: string) => ({ pool: { token }, instanceId: "user-inst" })),
     invalidateSession: () => {
       invalidations += 1;
     },
@@ -78,11 +86,20 @@ function makeFullHarness(opts: {
     finishAll: async () => {},
   } as unknown as RunManager;
 
-  const server = new Server({ cfg, client, registry, tokens, runs, log: () => {} });
+  const server = new Server({
+    cfg,
+    client,
+    registry,
+    tokens,
+    runs,
+    log: () => {},
+    resolveTokenForApiKey: opts.resolveTokenForApiKey,
+  });
 
   return {
     base: "",
     bodies,
+    tokensUsed,
     chatCalls: () => calls,
     invalidations: () => invalidations,
     start: async () => {
@@ -482,5 +499,67 @@ describe("proxy API key auth", () => {
   test("still requires the key for /v1/chat/completions", async () => {
     const resp = await chatPost(base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
     expect(resp.status).toBe(401);
+  });
+});
+
+describe("web-login API keys (sk-fb-*)", () => {
+  test("a resolved user key serves the request with the caller's own token", async () => {
+    const harness = makeFullHarness({
+      resolveTokenForApiKey: (key: string) => (key.startsWith("sk-fb-") ? key.slice("sk-fb-".length) : undefined),
+      acquireUserSession: async (token: string) => ({ pool: { token }, instanceId: "user-inst" }),
+    });
+    const started = await harness.start();
+    try {
+      const resp = await chatPost(
+        started.base,
+        { model: MODEL, messages: [{ role: "user", content: "hi" }] },
+        { Authorization: "Bearer sk-fb-user-1" },
+      );
+      expect(resp.status).toBe(200);
+      expect(harness.tokensUsed).toEqual(["user-1"]);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("accepts user keys via x-api-key as well", async () => {
+    const harness = makeFullHarness({
+      resolveTokenForApiKey: (key: string) => (key.startsWith("sk-fb-") ? key.slice("sk-fb-".length) : undefined),
+    });
+    const started = await harness.start();
+    try {
+      const resp = await chatPost(
+        started.base,
+        { model: MODEL, messages: [{ role: "user", content: "hi" }] },
+        { "x-api-key": "sk-fb-xkey" },
+      );
+      expect(resp.status).toBe(200);
+      expect(harness.tokensUsed).toEqual(["xkey"]);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("unknown keys are rejected even without env API_KEYS", async () => {
+    const harness = makeFullHarness({ resolveTokenForApiKey: () => undefined });
+    const started = await harness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      expect(resp.status).toBe(401);
+      expect(harness.chatCalls()).toBe(0);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("/healthz stays public when a key resolver is present", async () => {
+    const harness = makeFullHarness({ resolveTokenForApiKey: () => undefined });
+    const started = await harness.start();
+    try {
+      const resp = await fetch(`${started.base}/healthz`);
+      expect(resp.status).toBe(200);
+    } finally {
+      await started.server.close();
+    }
   });
 });

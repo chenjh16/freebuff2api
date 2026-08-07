@@ -31,10 +31,14 @@ CLI-gate system-marker injection).
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| GET | `/` | Landing page / live console (status, models, try-a-chat) |
+| GET | `/` | Landing page: sign in, API key dashboard, model playground |
 | GET | `/healthz` | Liveness + model registry + token/session state |
 | GET | `/v1/models` | Free models currently served |
 | POST | `/v1/chat/completions` | Chat — JSON or SSE stream |
+| POST | `/api/auth/start` | Start a device-code login (web) |
+| GET | `/api/auth/status` | Poll the login until the user signs in |
+| POST | `/api/auth/register` | Validate the account token, mint an `sk-fb-…` key |
+| POST | `/api/auth/revoke` | Revoke an API key (sign out) |
 
 Authentication for the API surface is `Authorization: Bearer <key>` or
 `x-api-key: <key>`.
@@ -55,6 +59,29 @@ These are the same variables documented in
 [07 – Configuration & Usage](07-configuration-and-usage.md); the hosted app
 reads them from the deployment environment.
 
+## Web login (per-user API keys)
+
+Besides the shared `AUTH_TOKENS` pool, visitors can sign in on the site
+itself — the flow mirrors `freebuff2api login`:
+
+1. The page requests a one-time device-code link (`POST /api/auth/start`),
+   opens it in a new tab and polls `GET /api/auth/status` until the user
+   signs in on freebuff.com.
+2. The account token is validated with `GET /api/v1/me`, then an API key of
+   the form `sk-fb-…` is minted — the account token encrypted with
+   AES-256-GCM using a server secret (`PROXY_SECRET`, see below).
+3. The proxy resolves any `sk-fb-…` key back to the account token per
+   request, so OpenAI-compatible clients only ever need the API key; each
+   key's sessions/quota belong to its own freebuff.com account.
+4. **Sign out** on the site revokes the key (in-memory) and clears the
+   browser copy; the next login mints a fresh key.
+
+So `AUTH_TOKENS` is **optional** in hosted mode: it only feeds the shared
+pool used by the default `API_KEYS`. The key-encryption secret is derived
+from `PROXY_SECRET` (recommended — set a fixed value so web-login keys
+survive redeploys), else from a hash of `AUTH_TOKENS`, else a per-process
+random (keys then reset on redeploy).
+
 > ⚠️ **`AUTH_TOKENS` vs `API_KEYS`** — these are different credentials.
 > `AUTH_TOKENS` is your **freebuff.com account token** (the token your
 > freebuff.com account uses; get it with `freebuff2api login`, or from your
@@ -71,9 +98,10 @@ reads them from the deployment environment.
    detects the Next.js app, runs `next build`, and serves it on the project
    domain. (Redeploys after the first one can be triggered with
    `freebuff-deploy start`.)
-3. Set `AUTH_TOKENS` in the deploy environment (Deployments → env). Without
-   it the site and `/healthz` stay up, but `/v1/*` returns a `503`
-   "proxy is not configured" error.
+3. (Optional) Set `AUTH_TOKENS` in the deploy environment (Deployments →
+   env) to feed the shared token pool. Without it the site still works:
+   visitors sign in on the page and get their own `sk-fb-…` keys. Set
+   `PROXY_SECRET` to a fixed value so web-login keys survive redeploys.
 4. Verify:
 
 ```bash

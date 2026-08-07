@@ -52,6 +52,14 @@ export interface HandlerDeps {
   log: (message: string) => void;
   /** Server start time (ms epoch); used for /healthz uptime and model `created`. */
   startedAt?: number;
+  /**
+   * Map a presented API key to the upstream account token it stands for.
+   * Used by the hosted web login flow: keys minted by the site (`sk-fb-…`)
+   * resolve to the logged-in user's freebuff.com token, which is then used
+   * for this request instead of the env-token pool. When absent (or for a
+   * key it doesn't recognize) the env pool is used as before.
+   */
+  resolveTokenForApiKey?: (apiKey: string) => string | undefined;
 }
 
 /** Build a web-native request handler bound to the given dependencies. */
@@ -63,8 +71,11 @@ export function createHandler(deps: HandlerDeps): (request: Request) => Promise<
 
     // API-key gate: /v1/* is protected so unauthenticated traffic never
     // touches upstream. /healthz (and the web landing page) stay public so
-    // hosting health probes and status checks work without a key.
-    if (deps.cfg.apiKeys.length > 0 && path !== "/healthz" && !isAuthorized(request, deps.cfg.apiKeys)) {
+    // hosting health probes and status checks work without a key. A key is
+    // valid when it is in the configured API_KEYS or it resolves to an
+    // upstream token via the web-login key resolver.
+    const gateRequired = deps.cfg.apiKeys.length > 0 || deps.resolveTokenForApiKey !== undefined;
+    if (path !== "/healthz" && gateRequired && !isAuthorized(request, deps.cfg.apiKeys, deps.resolveTokenForApiKey)) {
       return openAIError(401, "invalid proxy api key", "authentication_error", "");
     }
 
@@ -81,17 +92,30 @@ export function createHandler(deps: HandlerDeps): (request: Request) => Promise<
   };
 }
 
-/** Shared auth check: `x-api-key` header or `Authorization: Bearer <key>`. */
-export function isAuthorized(request: Request, apiKeys: string[]): boolean {
-  const apiKey = request.headers.get("x-api-key");
-  if (typeof apiKey === "string" && apiKey.trim() && apiKeys.includes(apiKey.trim())) {
-    return true;
-  }
+/** Extract the API key from `x-api-key` or `Authorization: Bearer <key>`. */
+export function extractApiKey(request: Request): string | null {
+  const direct = request.headers.get("x-api-key");
+  if (direct && direct.trim()) return direct.trim();
   const auth = request.headers.get("authorization");
-  if (!auth) return false;
+  if (!auth) return null;
   const match = /^Bearer\s+(.+)$/i.exec(auth.trim());
-  if (!match) return false;
-  return apiKeys.includes(match[1].trim());
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Shared auth check: `x-api-key` header or `Authorization: Bearer <key>`.
+ * A key is accepted when it is in `apiKeys` or (optionally) when the
+ * web-login resolver maps it to an upstream token.
+ */
+export function isAuthorized(
+  request: Request,
+  apiKeys: string[],
+  resolveToken?: (apiKey: string) => string | undefined,
+): boolean {
+  const apiKey = extractApiKey(request);
+  if (!apiKey) return false;
+  if (apiKeys.includes(apiKey)) return true;
+  return resolveToken ? resolveToken(apiKey) !== undefined : false;
 }
 
 function healthz(deps: HandlerDeps, startedAt: number): Response {
@@ -163,12 +187,19 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
   }
 
   const started = Date.now();
+  // A web-login key resolves to the account token that should serve this
+  // request; everything below uses lease.poolToken, so the user's token is
+  // carried through session/run/chat transparently.
+  const upstreamToken = deps.resolveTokenForApiKey ? deps.resolveTokenForApiKey(extractApiKey(request) ?? "") : undefined;
+
   // A run/session invalid response is retried once with a fresh lease.
   for (let attempt = 0; attempt < 2; attempt++) {
     let lease: { poolToken: string; instanceId: string | null };
     try {
-      const { pool, instanceId } = await deps.tokens.acquireSession(requestedModel, signal);
-      lease = { poolToken: pool.token, instanceId };
+      const acquired = upstreamToken
+        ? await deps.tokens.acquireUserSession(upstreamToken, requestedModel, signal)
+        : await deps.tokens.acquireSession(requestedModel, signal);
+      lease = { poolToken: acquired.pool.token, instanceId: acquired.instanceId };
     } catch (error) {
       if (error instanceof WaitingRoomError) {
         return openAIError(503, error.message, "server_error", "waiting_room_queued", error.retryAfterMs);

@@ -50,7 +50,7 @@ describe("unconfiguredHandler (AUTH_TOKENS missing)", () => {
     const body = (await resp.json()) as { ok: boolean; configured: boolean; hint: string };
     expect(body.ok).toBe(false);
     expect(body.configured).toBe(false);
-    expect(body.hint).toContain("AUTH_TOKENS");
+    expect(body.hint).toContain("UPSTREAM_BASE_URL");
   });
 
   test("API endpoints return a clear 503 until AUTH_TOKENS is set", async () => {

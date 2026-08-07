@@ -2,111 +2,318 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-interface Health {
-  ok: boolean;
-  configured?: boolean;
-  upstream?: string;
-  user_agent?: string;
-  acting_user_id?: string | null;
-  models?: { source: string; agentCount: number; modelCount: number };
-  error?: string;
+// ---------------------------------------------------------------------------
+// Types & storage
+// ---------------------------------------------------------------------------
+
+interface Session {
+  authToken: string;
+  apiKey: string;
+  user: { id?: string | null; name?: string | null; email?: string | null };
 }
 
-const CURL_SNIPPET = `curl https://freebuff2api.freebuff.app/v1/chat/completions \\
-  -H "Authorization: Bearer sk-freebuff2api-2026" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "deepseek/deepseek-v4-flash",
-    "stream": true,
-    "messages": [{ "role": "user", "content": "Hello!" }]
-  }'`;
+interface PendingLogin {
+  fingerprintId: string;
+  fingerprintHash: string;
+  expiresAt: number;
+  loginUrl: string;
+}
+
+const SESSION_KEY = "freebuff2api_session";
+const PENDING_KEY = "freebuff2api_pending";
+const DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
+
+function uuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `codebuff-cli-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function readStored<T>(key: string): T | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage unavailable; ignore.
+  }
+}
+
+function clearStored(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Ignore.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+
+type ToastKind = "ok" | "err";
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(el);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function maskKey(key: string): string {
+  if (key.length <= 14) return "•".repeat(key.length);
+  return `${key.slice(0, 10)}${"•".repeat(10)}${key.slice(-4)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function Home() {
-  const [apiKey, setApiKey] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem("freebuff2api-key") ?? "";
-  });
-  const [health, setHealth] = useState<Health | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [booting, setBooting] = useState(true);
   const [models, setModels] = useState<string[]>([]);
-  const [busy, setBusy] = useState(true);
-  const [hint, setHint] = useState<string>("");
-  const [copied, setCopied] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
 
-  const [model, setModel] = useState("deepseek/deepseek-v4-flash");
-  const [prompt, setPrompt] = useState("Explain the freebuff2api request flow in one short paragraph.");
+  // login flow
+  const [pending, setPending] = useState<PendingLogin | null>(null);
+  const [waiting, setWaiting] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [loginError, setLoginError] = useState("");
+
+  // dashboard
+  const [revealKey, setRevealKey] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+
+  // playground
+  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [prompt, setPrompt] = useState("Hi");
   const [running, setRunning] = useState(false);
+  const [thinking, setThinking] = useState("");
   const [output, setOutput] = useState("");
   const [outputError, setOutputError] = useState(false);
-  const outputRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = useCallback((msg: string, kind: ToastKind = "ok") => {
+    setToast({ msg, kind });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  const baseURL = typeof window !== "undefined" ? `${window.location.origin}/v1` : "https://freebuff2api.freebuff.app/v1";
 
   const authHeaders = useCallback(
-    (): Record<string, string> => (apiKey.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {}),
-    [apiKey],
+    (): Record<string, string> => (session ? { Authorization: `Bearer ${session.apiKey}` } : {}),
+    [session],
   );
 
-  const refresh = useCallback(async () => {
-    setBusy(true);
-    setHint("");
+  const refreshModels = useCallback(async () => {
+    if (!session) return;
     try {
-      const [healthResp, modelsResp] = await Promise.all([
-        fetch("/healthz", { headers: authHeaders() }),
-        fetch("/v1/models", { headers: authHeaders() }),
-      ]);
-      const h = (await healthResp.json().catch(() => null)) as Health | null;
-      setHealth(h);
-      if (healthResp.status === 401 || modelsResp.status === 401) {
-        setHint("This endpoint requires an API key — paste sk-freebuff2api-2026 above.");
-      } else if (h && h.configured === false) {
-        setHint("The proxy is live but not yet configured: the deploy needs AUTH_TOKENS set (server-side).");
-      }
-      if (modelsResp.ok) {
-        const body = (await modelsResp.json().catch(() => null)) as { data?: { id: string }[] } | null;
+      const resp = await fetch("/v1/models", { headers: authHeaders() });
+      if (resp.ok) {
+        const body = (await resp.json()) as { data?: { id: string }[] };
         const ids = body?.data?.map((m) => m.id) ?? [];
         setModels(ids);
         if (ids.length > 0 && !ids.includes(model)) setModel(ids[0]);
       }
     } catch {
-      setHealth({ ok: false });
-      setHint("Could not reach the API from the browser.");
-    } finally {
-      setBusy(false);
+      // Models list is best-effort.
     }
-  }, [authHeaders, model]);
+  }, [session, authHeaders, model]);
 
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const finishRegister = useCallback(
+    async (authToken: string) => {
+      setLoginBusy(true);
+      try {
+        const resp = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ authToken }),
+        });
+        const body = (await resp.json().catch(() => null)) as { apiKey?: string; user?: Session["user"]; error?: string } | null;
+        if (!resp.ok || !body?.apiKey) {
+          throw new Error(body?.error ?? `register failed (${resp.status})`);
+        }
+        const next: Session = { authToken, apiKey: body.apiKey, user: body.user ?? { email: null } };
+        writeStored(SESSION_KEY, next);
+        setSession(next);
+        setPending(null);
+        setWaiting(false);
+        clearStored(PENDING_KEY);
+        showToast("Signed in — API key ready");
+        void refreshModels();
+      } catch (error) {
+        setLoginError(error instanceof Error ? error.message : String(error));
+        setWaiting(false);
+      } finally {
+        setLoginBusy(false);
+      }
+    },
+    [refreshModels, showToast],
+  );
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
   }, []);
 
-  const saveKey = () => {
-    window.localStorage.setItem("freebuff2api-key", apiKey.trim());
-    void refresh();
-  };
+  const pollStatus = useCallback(
+    async (p: PendingLogin) => {
+      try {
+        const params = new URLSearchParams({
+          fingerprintId: p.fingerprintId,
+          fingerprintHash: p.fingerprintHash,
+          expiresAt: String(p.expiresAt),
+          loginUrl: p.loginUrl,
+        });
+        const resp = await fetch(`/api/auth/status?${params.toString()}`, { cache: "no-store" });
+        const body = (await resp.json().catch(() => null)) as { user?: { authToken?: string } } | null;
+        if (resp.ok && body?.user?.authToken) {
+          stopPolling();
+          void finishRegister(body.user.authToken);
+          return true;
+        }
+        if (p.expiresAt > 0 && Date.now() > p.expiresAt) {
+          stopPolling();
+          setWaiting(false);
+          setLoginError("This login link expired — start a new one.");
+          return true;
+        }
+      } catch {
+        // Transient network error; keep polling.
+      }
+      return false;
+    },
+    [finishRegister, stopPolling],
+  );
 
-  const copySnippet = async () => {
+  const startLogin = useCallback(async () => {
+    setLoginBusy(true);
+    setLoginError("");
     try {
-      await navigator.clipboard.writeText(CURL_SNIPPET);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard unavailable; ignore.
+      const fingerprintId = uuid();
+      const resp = await fetch("/api/auth/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprintId }),
+      });
+      const body = (await resp.json().catch(() => null)) as { loginUrl?: string; fingerprintHash?: string; expiresAt?: number; error?: string } | null;
+      if (!resp.ok || !body?.loginUrl || !body?.fingerprintHash) {
+        throw new Error(body?.error ?? `could not start login (${resp.status})`);
+      }
+      const p: PendingLogin = {
+        fingerprintId,
+        fingerprintHash: body.fingerprintHash,
+        expiresAt: body.expiresAt ?? 0,
+        loginUrl: body.loginUrl,
+      };
+      writeStored(PENDING_KEY, p);
+      setPending(p);
+      setWaiting(true);
+      const win = window.open(p.loginUrl, "_blank");
+      if (!win) showToast("Popup blocked — click “Open login page” below", "err");
+      stopPolling();
+      pollRef.current = setInterval(() => void pollStatus(p), 6000);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoginBusy(false);
     }
-  };
+  }, [pollStatus, showToast, stopPolling]);
 
-  const runChat = async () => {
-    if (!prompt.trim()) return;
+  const resumePending = useCallback(async () => {
+    const p = readStored<PendingLogin>(PENDING_KEY);
+    if (!p || (p.expiresAt > 0 && Date.now() > p.expiresAt)) return;
+    setPending(p);
+    setWaiting(true);
+    stopPolling();
+    pollRef.current = setInterval(() => void pollStatus(p), 6000);
+  }, [pollStatus, stopPolling]);
+
+  // Boot: validate a stored session, else restore a pending login, else idle.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = readStored<Session>(SESSION_KEY);
+      if (stored?.authToken) {
+        try {
+          const resp = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ authToken: stored.authToken }),
+          });
+          const body = (await resp.json().catch(() => null)) as { apiKey?: string; user?: Session["user"] } | null;
+          if (resp.ok && body?.apiKey) {
+            const next: Session = { ...stored, apiKey: body.apiKey, user: body.user ?? stored.user };
+            writeStored(SESSION_KEY, next);
+            if (!cancelled) setSession(next);
+          } else {
+            clearStored(SESSION_KEY);
+          }
+        } catch {
+          // Network error — keep the stored session and let the first API
+          // call surface any problem.
+          if (!cancelled) setSession(stored);
+        }
+      }
+      if (!cancelled) {
+        if (!readStored(SESSION_KEY)) await resumePending();
+        setBooting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
+  }, [resumePending, stopPolling]);
+
+  useEffect(() => {
+    if (!session) return;
+    void refreshModels();
+  }, [session, refreshModels]);
+
+  // ---- playground --------------------------------------------------------
+
+  const runChat = useCallback(async () => {
+    if (!session || !prompt.trim() || running) return;
     setRunning(true);
     setOutput("");
+    setThinking("");
     setOutputError(false);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const resp = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({
-          model,
-          stream: true,
-          messages: [{ role: "user", content: prompt }],
-        }),
+        body: JSON.stringify({ model, stream: true, messages: [{ role: "user", content: prompt }] }),
+        signal: controller.signal,
       });
       if (!resp.ok) {
         const body = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
@@ -118,11 +325,9 @@ export default function Home() {
         setOutput("(empty response)");
         return;
       }
-
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let text = "";
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -136,222 +341,420 @@ export default function Home() {
           if (data === "[DONE]") continue;
           try {
             const chunk = JSON.parse(data) as {
-              choices?: { delta?: { content?: string }; message?: { content?: string } }[];
+              choices?: { delta?: { content?: string; reasoning_content?: string }; message?: { content?: string; reasoning_content?: string } }[];
             };
-            const delta =
-              chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content ?? "";
-            if (delta) {
-              text += delta;
-              setOutput(text);
-              outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight });
-            }
+            const c = chunk.choices?.[0];
+            const delta = c?.delta?.content ?? c?.message?.content ?? "";
+            const reason = c?.delta?.reasoning_content ?? c?.message?.reasoning_content ?? "";
+            if (reason) setThinking((prev) => prev + reason);
+            if (delta) setOutput((prev) => prev + delta);
           } catch {
-            // Ignore malformed keep-alive frames.
+            // Ignore malformed frames.
           }
         }
       }
-      if (!text) setOutput("(no content in stream)");
+      if (!output && !thinking) setOutput("(no content in stream)");
     } catch (error) {
-      setOutput(`Request failed: ${error instanceof Error ? error.message : String(error)}`);
-      setOutputError(true);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setOutput((prev) => (prev ? prev + "\n\n⏹ stopped" : "⏹ stopped"));
+      } else {
+        setOutput(`Request failed: ${error instanceof Error ? error.message : String(error)}`);
+        setOutputError(true);
+      }
     } finally {
       setRunning(false);
+      abortRef.current = null;
     }
-  };
+  }, [session, prompt, running, model, authHeaders, output, thinking]);
 
-  const online = health?.ok === true && health?.configured !== false;
-  const configured = health?.configured !== false && online;
-  const statusLabel = busy
-    ? "checking…"
-    : health === null
-      ? "unreachable"
-      : health.configured === false
-        ? "live · needs AUTH_TOKENS"
-        : online
-          ? "live"
-          : "live · needs AUTH_TOKENS";
+  const stopChat = useCallback(() => abortRef.current?.abort(), []);
+
+  // ---- logout ------------------------------------------------------------
+
+  const logout = useCallback(async () => {
+    setLogoutOpen(false);
+    if (session) {
+      try {
+        await fetch("/api/auth/revoke", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apiKey: session.apiKey }),
+        });
+      } catch {
+        // Best-effort revoke.
+      }
+    }
+    clearStored(SESSION_KEY);
+    clearStored(PENDING_KEY);
+    stopPolling();
+    setSession(null);
+    setModels([]);
+    setOutput("");
+    setThinking("");
+    showToast("Signed out — API key revoked", "ok");
+  }, [session, showToast, stopPolling]);
+
+  const curlUnix = `curl ${baseURL}/chat/completions \\
+  -H "Authorization: Bearer ${session?.apiKey ?? "sk-fb-…"}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"${model}","stream":true,"messages":[{"role":"user","content":"Hi"}]}'`;
+
+  const curlWindows = `curl.exe ${baseURL}/chat/completions -H "Authorization: Bearer ${session?.apiKey ?? "sk-fb-…"}" -H "Content-Type: application/json" -d "{\\"model\\":\\"${model}\\",\\"stream\\":true,\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hi\\"}]}"`;
+
+  // -------------------------------------------------------------------------
+
+  if (booting) {
+    return (
+      <div className="boot">
+        <span className="boot-mark">fb</span>
+        <span className="boot-text">freebuff2api</span>
+      </div>
+    );
+  }
 
   return (
     <div>
       <div className="mesh" />
       <div className="grid-overlay" />
 
-      <div className="wrap">
-        <header className="nav">
-          <div className="brand">
-            <span className="mark">fb</span>
-            freebuff2api
+      {!session ? (
+        <LoginView
+          pending={pending}
+          waiting={waiting}
+          loginBusy={loginBusy}
+          loginError={loginError}
+          onStart={() => void startLogin()}
+          onOpen={() => pending && window.open(pending.loginUrl, "_blank")}
+          onCancel={() => {
+            stopPolling();
+            setWaiting(false);
+            setPending(null);
+            clearStored(PENDING_KEY);
+          }}
+        />
+      ) : (
+        <DashboardView
+          session={session}
+          models={models}
+          model={model}
+          setModel={setModel}
+          prompt={prompt}
+          setPrompt={setPrompt}
+          running={running}
+          thinking={thinking}
+          output={output}
+          outputError={outputError}
+          revealKey={revealKey}
+          setRevealKey={setRevealKey}
+          baseURL={baseURL}
+          curlUnix={curlUnix}
+          curlWindows={curlWindows}
+          logoutOpen={logoutOpen}
+          setLogoutOpen={setLogoutOpen}
+          onRun={() => void runChat()}
+          onStop={stopChat}
+          onLogout={() => void logout()}
+          onCopy={(text, label) => {
+            void copyText(text).then((ok) =>
+              showToast(ok ? `${label} copied` : "Copy failed", ok ? "ok" : "err"),
+            );
+          }}
+          showToast={showToast}
+        />
+      )}
+
+      {toast && <div className={`toast toast-${toast.kind}`}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Login view
+// ---------------------------------------------------------------------------
+
+function LoginView(props: {
+  pending: PendingLogin | null;
+  waiting: boolean;
+  loginBusy: boolean;
+  loginError: string;
+  onStart: () => void;
+  onOpen: () => void;
+  onCancel: () => void;
+}) {
+  const { pending, waiting, loginBusy, loginError, onStart, onOpen, onCancel } = props;
+  const secondsLeft = pending && pending.expiresAt > 0 ? Math.max(0, Math.round((pending.expiresAt - Date.now()) / 1000)) : null;
+
+  return (
+    <div className="wrap">
+      <header className="nav">
+        <div className="brand">
+          <span className="mark">fb</span>
+          freebuff2api
+        </div>
+        <span className="endpoint-badge">
+          <span className="dot ok" />
+          freebuff2api.freebuff.app
+        </span>
+      </header>
+
+      <main className="login-main">
+        <section className="hero">
+          <span className="kicker">No subscriptions · No API keys · Free coding models</span>
+          <h1>
+            Free coding models,
+            <br />
+            <span className="grad">one OpenAI endpoint.</span>
+          </h1>
+          <p className="lede">
+            freebuff2api gives you a personal OpenAI-compatible endpoint backed by Freebuff's free
+            agents. Sign in with your freebuff.com account once, and every model request is served
+            by your own session — streaming included.
+          </p>
+
+          <div className="login-box">
+            {!waiting ? (
+              <>
+                <button className="btn btn-big" onClick={onStart} disabled={loginBusy}>
+                  {loginBusy ? <span className="spin" /> : null}
+                  Continue with Freebuff
+                </button>
+                <p className="box-hint">
+                  Opens a one-time login link — you only do this once per browser.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="waiting">
+                  <span className="spin big" />
+                  <p className="waiting-title">Waiting for your login…</p>
+                  <p className="box-hint">
+                    {secondsLeft !== null && secondsLeft > 0
+                      ? `Link expires in ${Math.floor(secondsLeft / 60)}m ${secondsLeft % 60}s.`
+                      : "Open the link and sign in on freebuff.com."}
+                  </p>
+                  {pending ? (
+                    <button className="btn ghost" onClick={onOpen}>
+                      Open login page
+                    </button>
+                  ) : null}
+                </div>
+                <div className="row-c">
+                  <button className="link-btn" onClick={onCancel}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+            {loginError ? <p className="login-error">{loginError}</p> : null}
           </div>
+        </section>
+
+        <section className="feature-strip">
+          <div className="feature">
+            <span className="feature-n">01</span>
+            <b>Sign in once</b>
+            <p>Device-code login with your freebuff.com account. No password stored.</p>
+          </div>
+          <div className="feature">
+            <span className="feature-n">02</span>
+            <b>Get your API key</b>
+            <p>An sk-fb-… key is minted for you and bound to your account session.</p>
+          </div>
+          <div className="feature">
+            <span className="feature-n">03</span>
+            <b>Point any client at it</b>
+            <p>OpenAI-compatible /v1 — Claude Code, Cline, LobeChat, curl, anything.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard view
+// ---------------------------------------------------------------------------
+
+function DashboardView(props: {
+  session: Session;
+  models: string[];
+  model: string;
+  setModel: (m: string) => void;
+  prompt: string;
+  setPrompt: (p: string) => void;
+  running: boolean;
+  thinking: string;
+  output: string;
+  outputError: boolean;
+  revealKey: boolean;
+  setRevealKey: (v: boolean) => void;
+  baseURL: string;
+  curlUnix: string;
+  curlWindows: string;
+  logoutOpen: boolean;
+  setLogoutOpen: (v: boolean) => void;
+  onRun: () => void;
+  onStop: () => void;
+  onLogout: () => void;
+  onCopy: (text: string, label: string) => void;
+  showToast: (msg: string, kind?: ToastKind) => void;
+}) {
+  const { session, models, model, setModel, prompt, setPrompt, running, thinking, output, outputError } = props;
+  const { revealKey, setRevealKey, baseURL, curlUnix, curlWindows, logoutOpen, setLogoutOpen } = props;
+  const { onRun, onStop, onLogout, onCopy } = props;
+
+  const displayKey = revealKey ? session.apiKey : maskKey(session.apiKey);
+  const accountName = session.user?.name || session.user?.email || "Freebuff account";
+
+  return (
+    <div className="wrap">
+      <header className="nav">
+        <div className="brand">
+          <span className="mark">fb</span>
+          freebuff2api
+        </div>
+        <div className="nav-right">
           <span className="endpoint-badge">
-            <span className={`dot ${busy ? "warn" : online ? "ok" : "warn"}`} />
-            freebuff2api.freebuff.app
+            <span className="dot ok" />
+            {session.user?.email ?? "account"}
           </span>
-        </header>
+        </div>
+      </header>
 
-        <main>
-          <section className="hero">
-            <span className="kicker">OpenAI-compatible · Free models · Streaming</span>
-            <h1>Freebuff’s free models, behind one OpenAI endpoint.</h1>
-            <p className="lede">
-              freebuff2api is a thin reverse proxy that speaks the standard{" "}
-              <code>/v1/chat/completions</code> protocol and relays requests to the Freebuff
-              coding API — session, agent-run and CLI-gate handling included. Point any
-              OpenAI-compatible client at it and drive Freebuff’s free agents.
-            </p>
-            <div className="meta">
-              <span className="pill">
-                base <b>https://freebuff2api.freebuff.app</b>
-              </span>
-              <span className="pill">
-                auth <b>Bearer sk-freebuff2api-2026</b>
-              </span>
-              <span className="pill">
-                status <b>{statusLabel}</b>
-              </span>
+      <main className="dash-main">
+        <section className="hero hero-small">
+          <span className="kicker">Personal endpoint · ready</span>
+          <h1>
+            Your API, <span className="grad">live.</span>
+          </h1>
+          <p className="lede">Everything below is private to your freebuff.com session.</p>
+        </section>
+
+        <div className="grid-2">
+          <section className="card pad">
+            <h2>API Key</h2>
+            <p className="sub">Minted for your account on first login.</p>
+            <div className="key-row">
+              <code className="key-value">{displayKey}</code>
+              <div className="key-actions">
+                <button className="btn icon" onClick={() => setRevealKey(!revealKey)} title={revealKey ? "Hide" : "Reveal"}>
+                  {revealKey ? "Hide" : "Show"}
+                </button>
+                <button className="btn icon" onClick={() => onCopy(session.apiKey, "API key")} title="Copy">
+                  Copy
+                </button>
+              </div>
             </div>
           </section>
 
-          <div className="code-wrap">
-            <button className="copy-btn" onClick={() => void copySnippet()}>
-              {copied ? "copied ✓" : "copy"}
+          <section className="card pad">
+            <h2>Base URL</h2>
+            <p className="sub">Use with any OpenAI-compatible client.</p>
+            <div className="key-row">
+              <code className="key-value">{baseURL}</code>
+              <div className="key-actions">
+                <button className="btn icon" onClick={() => onCopy(baseURL, "Base URL")} title="Copy">
+                  Copy
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <section className="card pad code-card">
+          <h2>Quick start — curl</h2>
+          <p className="sub">Streaming chat against your personal endpoint.</p>
+          <div className="tabs">
+            <button className="tab" onClick={() => onCopy(curlUnix, "curl command")}>
+              UNIX / Linux
             </button>
-            <pre className="code">{CURL_SNIPPET}</pre>
+            <button className="tab" onClick={() => onCopy(curlWindows, "curl command")}>
+              Windows
+            </button>
           </div>
-
-          {hint && <div className="banner">{hint}</div>}
-
-          <section className="card pad" style={{ marginTop: 26 }}>
-            <h2>API console</h2>
-            <p className="sub">
-              Enter the proxy API key, load the live model list, then try a streaming chat right
-              here.
-            </p>
-            <div className="field">
-              <input
-                type="text"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="API key — sk-freebuff2api-2026"
-                spellCheck={false}
-              />
-              <button className="btn" onClick={saveKey}>
-                Save key
-              </button>
-              <button className="btn ghost" onClick={() => void refresh()} disabled={busy}>
-                {busy ? <span className="spin" /> : null}
-                Refresh
-              </button>
-            </div>
-            <div className="row">
-              <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)}>
-                {models.length === 0 ? (
-                  <option value={model}>{model}</option>
-                ) : (
-                  models.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))
-                )}
-              </select>
-              <button className="btn" onClick={() => void runChat()} disabled={running || !prompt.trim()}>
-                {running ? <span className="spin" /> : null}
-                {running ? "Streaming…" : "Run chat"}
-              </button>
-            </div>
-            <textarea
-              className="prompt"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Ask the model anything…"
-              style={{ marginTop: 12 }}
-            />
-            <div ref={outputRef} className={`output${outputError ? " error" : ""}`}>
-              {output || <span className="dim">The streamed reply appears here.</span>}
-            </div>
-          </section>
-
-          <div className="status-strip">
-            <div className="status-cell">
-              <div className="k">Upstream</div>
-              <div className="v">{health?.upstream ?? "—"}</div>
-            </div>
-            <div className="status-cell">
-              <div className="k">Model registry</div>
-              <div className="v">
-                {health?.models ? `${health.models.modelCount} models · ${health.models.source}` : "—"}
-              </div>
-            </div>
-            <div className="status-cell">
-              <div className="k">Acting user</div>
-              <div className="v">{health?.acting_user_id ?? "—"}</div>
-            </div>
-            <div className="status-cell">
-              <div className="k">Endpoint</div>
-              <div className="v">/v1</div>
-            </div>
+          <div className="code-wrap">
+            <button className="copy-btn" onClick={() => onCopy(curlUnix, "curl command")}>
+              copy
+            </button>
+            <pre className="code">
+              <code>{curlUnix}</code>
+            </pre>
           </div>
+        </section>
 
-          <div className="grid-2">
-            <section className="card pad">
-              <h2>Endpoints</h2>
-              <p className="sub">The full OpenAI-compatible surface.</p>
-              <div className="ep">
-                <span className="method post">POST</span>
-                <span className="path">/v1/chat/completions</span>
-                <span className="desc">Chat · JSON or SSE stream</span>
-              </div>
-              <div className="ep">
-                <span className="method get">GET</span>
-                <span className="path">/v1/models</span>
-                <span className="desc">Available free models</span>
-              </div>
-              <div className="ep">
-                <span className="method get">GET</span>
-                <span className="path">/healthz</span>
-                <span className="desc">Liveness + session state</span>
-              </div>
-            </section>
-
-            <section className="card pad">
-              <h2>Models</h2>
-              <p className="sub">
-                {models.length > 0
-                  ? `${models.length} model${models.length === 1 ? "" : "s"} served by Freebuff free agents`
-                  : "Enter the API key and press Refresh to load them."}
-              </p>
-              <div className="chips">
-                {models.length === 0 ? (
-                  <div className="empty">
-                    No models loaded yet — the list is fetched live from <code>/v1/models</code>.
-                  </div>
-                ) : (
-                  models.map((id) => (
-                    <span key={id} className="chip">
-                      {id}
-                    </span>
-                  ))
-                )}
-              </div>
-            </section>
+        <section className="card pad">
+          <div className="play-head">
+            <h2>Model playground</h2>
+            <p className="sub">Streaming replies with the model's thinking block.</p>
           </div>
-        </main>
+          <div className="row">
+            <select className="model-select" value={model} onChange={(e) => setModel(e.target.value)}>
+              {models.length === 0 ? (
+                <option value={model}>{model}</option>
+              ) : (
+                models.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))
+              )}
+            </select>
+            {running ? (
+              <button className="btn ghost" onClick={onStop}>
+                Stop
+              </button>
+            ) : (
+              <button className="btn" onClick={onRun} disabled={!prompt.trim()}>
+                Run
+              </button>
+            )}
+          </div>
+          <textarea
+            className="prompt"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Ask the model anything…"
+            style={{ marginTop: 12 }}
+          />
 
-        <footer>
-          <span>
-            freebuff2api · MIT ·{" "}
-            <a href="https://github.com/chenjh16/freebuff2api" target="_blank" rel="noreferrer">
-              github.com/chenjh16/freebuff2api
-            </a>
-          </span>
-          <span>
-            docs:{" "}
-            <a href="https://github.com/chenjh16/freebuff2api/tree/main/docs" target="_blank" rel="noreferrer">
-              docs/
-            </a>
-          </span>
+          {thinking ? (
+            <details className="thinking" open>
+              <summary>Thinking</summary>
+              <pre>{thinking}</pre>
+            </details>
+          ) : null}
+
+          <div className={`output${outputError ? " error" : ""}`}>
+            {output || <span className="dim">{running ? "Streaming…" : "The streamed reply appears here."}</span>}
+          </div>
+        </section>
+
+        <footer className="dash-footer">
+          <button className="btn ghost danger" onClick={() => setLogoutOpen(true)}>
+            Sign out
+          </button>
         </footer>
-      </div>
+      </main>
+
+      {logoutOpen ? (
+        <div className="modal-backdrop" onClick={() => setLogoutOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Sign out?</h3>
+            <p>
+              This revokes your API key and clears your account info from this browser. Your
+              freebuff.com account itself is unaffected.
+            </p>
+            <div className="row right">
+              <button className="btn ghost" onClick={() => setLogoutOpen(false)}>
+                Cancel
+              </button>
+              <button className="btn danger-solid" onClick={onLogout}>
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
