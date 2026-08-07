@@ -23,6 +23,9 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Unit tests
+        run: bun test tests/unit
+
       - name: Build
         run: bun run build
 
@@ -34,3 +37,12 @@ jobs:
 
       - name: Smoke test (help)
         run: node dist/index.js --help
+
+      - name: Docs parity check (zh/en)
+        run: |
+          # every Chinese doc must have an English counterpart and vice versa
+          zh_count=$(ls docs/zh/*.md | wc -l)
+          en_count=$(ls docs/en/*.md | wc -l)
+          test "$zh_count" -eq "$en_count" \
+            || { echo "docs/zh has $zh_count files, docs/en has $en_count"; exit 1; }
+          echo "docs parity OK ($zh_count files each)"

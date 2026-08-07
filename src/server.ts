@@ -72,6 +72,12 @@ export class Server {
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
 
+  /** Return the OS-assigned listening port (mainly useful to test harnesses). */
+  listeningPort(): number | null {
+    const address = this.server.address();
+    return address && typeof address === "object" ? address.port : null;
+  }
+
   private async dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       if (this.deps.cfg.apiKeys.length > 0 && !this.authorized(req)) {
@@ -303,7 +309,10 @@ export class Server {
     const headers: Record<string, string> = {};
     upstream.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
-      if (lower === "content-length" || lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive") {
+      // fetch() transparently decompresses upstream bodies but may retain the
+      // original content-encoding header. Do not advertise compression for the
+      // already-decoded bytes we pipe to the client.
+      if (lower === "content-length" || lower === "content-encoding" || lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive") {
         return;
       }
       headers[key] = value;

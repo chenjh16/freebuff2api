@@ -68,10 +68,9 @@ const DEFAULTS: RawConfig = {
 
 /** Parse a Go-style duration like "15m", "6h", "90s", "1h30m" into ms. */
 export function parseDuration(value: string, fallbackMs: number): number {
-  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/.exec(value.trim());
-  if (!match) return fallbackMs;
-  const amount = Number.parseFloat(match[1]);
-  const unit = match[2] ?? "ms";
+  const input = value.trim();
+  if (!input) return fallbackMs;
+
   const multipliers: Record<string, number> = {
     ms: 1,
     s: 1_000,
@@ -79,9 +78,26 @@ export function parseDuration(value: string, fallbackMs: number): number {
     h: 3_600_000,
     d: 86_400_000,
   };
-  const ms = amount * (multipliers[unit] ?? 1);
-  return Number.isFinite(ms) && ms > 0 ? Math.round(ms) : fallbackMs;
-}
+
+  // A bare number is interpreted as milliseconds for convenient local config.
+  if (/^\d+(?:\.\d+)?$/.test(input)) {
+    const ms = Number.parseFloat(input);
+    return Number.isFinite(ms) && ms > 0 ? Math.round(ms) : fallbackMs;
+  }
+
+  // Accept concatenated Go-style components such as "1h30m" and "2m500ms".
+  const component = /(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)/g;
+  let cursor = 0;
+  let total = 0;
+  let match: RegExpExecArray | null;
+  while ((match = component.exec(input)) !== null) {
+    if (match.index !== cursor) return fallbackMs;
+    total += Number.parseFloat(match[1]) * multipliers[match[2]];
+    cursor = component.lastIndex;
+  }
+  if (cursor !== input.length || !Number.isFinite(total) || total <= 0) return fallbackMs;
+  return Math.round(total);
+} 
 
 function parseListenAddr(raw: string, portOverride?: string): string {
   const addr = raw.trim() || ":8080";

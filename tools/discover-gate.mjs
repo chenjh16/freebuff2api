@@ -4,7 +4,7 @@
  *
  * 作用：对 /api/v1/chat/completions 的请求体做"逐个字段关掉"的变体测试，
  * 观察上游网关（403 free_mode_cli_required）放行还是拒绝，从而确定哪些
- * 字段是必需的。结论见 docs/04-请求格式破解.md。
+ * 字段是必需的。结论见 ../docs/zh/04-请求格式破解.md。
  *
  * 依赖捕获产物（仓库内）：
  *   tools/captured/chatbody-official.json   官方 CLI 成功请求的完整 body

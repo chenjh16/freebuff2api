@@ -2,7 +2,8 @@
 
 本指南介绍如何用 `tools/` 下的两个中间人代理抓取官方 freebuff CLI 的
 真实请求，以及如何解读抓包结果。**这是本仓库逆向分析的核心工作流**
-（成果见 [docs/04-请求格式破解.md](../docs/04-请求格式破解.md)）。
+（成果见 [docs/zh/04-请求格式破解.md](../docs/zh/04-请求格式破解.md)，
+英文版 [docs/en/04-request-format-gate.md](../docs/en/04-request-format-gate.md)）。
 
 ## 工具选型
 

@@ -18,7 +18,7 @@
 - **免费模式 CLI 网关破解**：自动注入 system 标记
   （`You are Buffy, the strategic coding assistant`），解决
   `403 free_mode_cli_required`
-- 中文文档（`docs/`）与调试工具集（`tools/`，含 TLS MITM 抓包工具）
+- 中英双语文档（`docs/zh/` 与 `docs/en/`）与调试工具集（`tools/`，含 TLS MITM 抓包工具）
 
 ### Fixed
 

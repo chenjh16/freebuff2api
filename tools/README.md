@@ -70,7 +70,7 @@ freebuff                             # 正常使用 CLI，触发一次对话
 ## 3. e2e-test.mjs — 全链路请求格式探索
 
 ```bash
-node tools/e2e-test.mjs              # baseline：普通 chat（会 403，见 docs/04）
+node tools/e2e-test.mjs              # baseline：普通 chat（会 403，见 docs/zh/04）
 node tools/e2e-test.mjs fullclone    # 复刻官方 CLI 完整流程（应 200）
 node tools/e2e-test.mjs delete       # 仅删除当前会话
 ```
@@ -91,7 +91,7 @@ node tools/discover-gate.mjs all        # 跑全部 8 个变体（耗 8 次额�
 
 可用变体：`exact` `nosystem` `notools` `nostop` `noprovider` `mint`
 `shortbuffy` `buffyname` `freebuffonly` `buffyfb` `firstsent` `climarker`
-`ourua` `all`。完整结果表见 [docs/04-请求格式破解.md](../docs/04-请求格式破解.md)。
+`ourua` `all`。完整结果表见 [docs/zh/04-请求格式破解.md](../docs/zh/04-请求格式破解.md)（英文版：[docs/en/04-request-format-gate.md](../docs/en/04-request-format-gate.md)）。
 
 ## 5. replay-captured.mjs — 捕获请求重放
 
@@ -158,7 +158,7 @@ freebuff
 1. `node tools/e2e-test.mjs` — 确认会话/运行是否正常
 2. 看 `DEBUG_UPSTREAM=1 bun run src/index.ts` 的代理日志，确认注入内容
 3. 网关类错误（403 free_mode_cli_required）：跑 `discover-gate.mjs`
-   复现 docs/04 的对照表，确认 system 标记仍在
+   复现 docs/zh/04 的对照表，确认 system 标记仍在
 4. 改了注入逻辑：跑 `prodlike-test.mjs` 回归
 5. 需要看官方 CLI 到底怎么发的：用 `mitm-ssl-proxy.mjs` 抓包对照
    （见 [MITM使用指南.md](MITM使用指南.md)）

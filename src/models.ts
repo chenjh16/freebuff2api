@@ -68,7 +68,7 @@ export class ModelRegistry {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    private readonly fetchFn: typeof fetch = fetch,
+    private readonly fetchFn: (url: string, init?: RequestInit) => Promise<Response> = (url, init) => fetch(url, init),
     private readonly log: (message: string) => void = console.log,
   ) {}
 
@@ -184,7 +184,10 @@ export class ModelRegistry {
   }
 }
 
-async function fetchText(fetchFn: typeof fetch, url: string): Promise<string> {
+async function fetchText(
+  fetchFn: (url: string, init?: RequestInit) => Promise<Response>,
+  url: string,
+): Promise<string> {
   const resp = await fetchFn(url, { signal: AbortSignal.timeout(30_000) });
   if (!resp.ok) throw new Error(`fetch ${url} failed with status ${resp.status}`);
   return resp.text();
@@ -207,7 +210,7 @@ function buildObjectAliases(source: string): Map<string, Map<string, string>> {
   const aliases = new Map<string, Map<string, string>>();
   const re = /export\s+const\s+([A-Za-z0-9_]+)\s*=\s*\{/g;
   for (const match of source.matchAll(re)) {
-    const start = match.index + match[0].length;
+    const start = match.index + match[0].length - 1;
     const end = findBalancedBrace(source, start);
     if (end === -1) continue;
     const body = source.slice(start, end);
@@ -224,7 +227,7 @@ function buildObjectAliases(source: string): Map<string, Map<string, string>> {
 /** Extract chained re-exports: `export const NAME = OTHER_IDENT`. */
 function buildIdentAliases(source: string): Map<string, string> {
   const map = new Map<string, string>();
-  const re = /export\s+const\s+([A-Za-z0-9_]+)\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/gm;
+  const re = /export\s+const\s+([A-Za-z0-9_]+)\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*;?\s*$/gm;
   for (const match of source.matchAll(re)) {
     // Skip object/array literals (handled elsewhere) and plain strings.
     if (/^['"[]/.test(match[2])) continue;

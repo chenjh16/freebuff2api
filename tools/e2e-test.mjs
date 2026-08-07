@@ -10,7 +10,7 @@
  * 生成），token 不会打印到日志。
  *
  * 用法：
- *   node tools/e2e-test.mjs            # baseline：普通 chat（会 403，见 docs/04）
+ *   node tools/e2e-test.mjs            # baseline：普通 chat（会 403，见 docs/zh/04）
  *   node tools/e2e-test.mjs fullclone  # 复刻官方 CLI 完整流程（含 compact GET）
  *   node tools/e2e-test.mjs delete     # 仅删除当前会话
  *

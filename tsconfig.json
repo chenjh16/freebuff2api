@@ -15,5 +15,5 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["src"]
+  "include": ["src", "tests/unit", "tests/e2e"]
 }

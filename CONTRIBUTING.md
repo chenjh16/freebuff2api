@@ -6,7 +6,7 @@
 
 - 技术栈：TypeScript + Bun（零运行时依赖）
 - 入口：`src/index.ts`
-- 文档：`docs/`（中文），工具：`tools/`（调试脚本）
+- 文档：`docs/zh/`（中文）与 `docs/en/`（英文，内容语义一致），工具：`tools/`（调试脚本）
 - 逆向依据：官方 [CodebuffAI/freebuff](https://github.com/CodebuffAI/freebuff)
 
 ## 开发流程
@@ -30,7 +30,7 @@ node --check tools/*.mjs   # 若改了 tools/ 下脚本
 
 - 保持零运行时依赖；如需新能力优先用 Node/Bun 内置 API
 - 修改导出的函数/类时，同步更新所有引用（可用 code-searcher 找引用）
-- 涉及上游协议的行为，请在 `docs/` 中同步更新说明
+- 涉及上游协议的行为，请在 `docs/zh/` 与 `docs/en/` 中同步更新对应说明
 - 提交信息遵循
   [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)：
   `feat:` / `fix:` / `docs:` / `chore:` 等

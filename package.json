@@ -47,7 +47,12 @@
     "login": "bun run src/index.ts login",
     "build": "bun build ./src/index.ts --target=node --outfile=dist/index.js",
     "typecheck": "tsc -b --noEmit",
-    "check": "tsc -b --noEmit && bun run build"
+    "check": "tsc -b --noEmit && bun run build",
+    "test": "bun test tests/unit",
+    "test:unit": "bun test tests/unit",
+    "test:e2e": "bun test tests/e2e",
+    "test:agentic": "node tests/agentic/run.mjs",
+    "test:all": "bun run test:unit && bun run test:e2e"
   },
   "devDependencies": {
     "@types/bun": "latest",

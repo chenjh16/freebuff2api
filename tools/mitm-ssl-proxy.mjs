@@ -9,7 +9,7 @@
  * 为什么需要它：freebuff CLI 的会话创建、agent-runs、chat 等请求都是
  * HTTPS。只有看到 CLI 发出的"真实成功请求"，才能逆向出免费模式网关
  * 到底检查什么（最终发现：system 消息中的 CLI 身份短语，见
- * docs/04-请求格式破解.md）。
+ * ../docs/zh/04-请求格式破解.md）。
  *
  * 原理：
  *   1. 本地监听 18100 端口，接受 CONNECT 隧道

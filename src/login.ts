@@ -71,7 +71,10 @@ export class LoginTimeoutError extends LoginError {
 // ---------------------------------------------------------------------------
 
 export function configDir(): string {
-  return join(homedir(), ".config", "freebuff2api");
+  // Primarily useful for isolated test runs and explicit deployments; normal
+  // users continue to use the platform's standard per-user config directory.
+  const override = process.env.FREEBUFF2API_CONFIG_DIR?.trim();
+  return override || join(homedir(), ".config", "freebuff2api");
 }
 
 export function credentialsPath(): string {
