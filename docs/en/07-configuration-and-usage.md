@@ -71,7 +71,7 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 | `freebuff2api --http-proxy http://127.0.0.1:7890` | Override the upstream proxy |
 | `node tools/model-availability.mjs` | Probe every model returned by `/v1/models` (consumes quota) |
 | `bun run typecheck` | Type check |
-| `bun run build` | Bundle to `dist/index.js` (node target) |
+| `bun run build:cli` | Bundle to `dist/index.js` (node target) |
 | `DEBUG_UPSTREAM=1 bun run src/index.ts` | Start with upstream debug logs |
 
 ## Proxy endpoints
@@ -84,11 +84,11 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 ## Deployment notes
 
-- Build artifact: `bun run build` → `dist/index.js` (pointed to by
+- Build artifact: `bun run build:cli` → `dist/index.js` (pointed to by
   `bin.freebuff2api` in `package.json`)
-- Production: use the `freebuff-deploy` tooling to configure the build
-  command (build = `bun run build`) and listen port; the runtime doesn't
-  depend on external services
+- Production (hosted): hosting detects the Next.js app and builds it with
+  `bun run build` (= `next build`); the CLI bundle is built separately with
+  `bun run build:cli`. The runtime doesn't depend on external services
 - Production env vars are managed separately from the sandbox `.env` via the
   `freebuff-deploy env` commands
 

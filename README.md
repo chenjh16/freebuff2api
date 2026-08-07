@@ -32,7 +32,7 @@ Code, Cline, LobeChat, curl, …) can drive Freebuff's free models.
 
 Zero runtime dependencies for the core proxy. Written in TypeScript for
 [Bun](https://bun.sh) (also runs on Node 22+ with
-`node --experimental-strip-types` or after `bun run build`). The hosted
+`node --experimental-strip-types` or after `bun run build:cli`). The hosted
 deployment adds a Next.js App Router app (`app/`) that mounts the same proxy
 handler on a public URL — no VPS needed (see
 [Hosted deployment](#hosted-deployment-freebuff)).
@@ -207,8 +207,8 @@ Full guide: [`docs/en/08-hosted-deployment.md`](docs/en/08-hosted-deployment.md)
 
 ```bash
 bun run typecheck   # tsc -b --noEmit
-bun run build       # bundles to dist/index.js (node target; bin: freebuff2api)
-bun run build:web   # next build — hosted deployment artifact
+bun run build       # next build — hosted deployment artifact (what hosting runs)
+bun run build:cli   # bundles to dist/index.js (node target; bin: freebuff2api)
 bun run start       # run the built CLI bundle
 bun run login       # device-code login (see above)
 bun run check       # typecheck + build
@@ -261,7 +261,7 @@ OpenAI 兼容客户端（Claude Code、Cline、LobeChat、curl…）都能驱动
 > [`tools/`](tools/README.md)。
 
 核心代理零运行时依赖。TypeScript 编写，面向 [Bun](https://bun.sh)（也可在
-Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build` 后运行）。
+Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build:cli` 后运行）。
 托管部署额外内置一个 Next.js App Router 应用（`app/`），把同一代理挂到
 公网域名上——无需 VPS（见[托管部署](#托管部署freebuff)）。
 
@@ -423,8 +423,8 @@ curl https://freebuff2api.freebuff.app/v1/chat/completions \
 
 ```bash
 bun run typecheck   # tsc -b --noEmit
-bun run build       # 打包到 dist/index.js（node 目标；bin: freebuff2api）
-bun run build:web   # next build —— 托管部署产物
+bun run build       # next build —— 托管部署产物（托管执行的构建命令）
+bun run build:cli   # 打包到 dist/index.js（node 目标；bin: freebuff2api）
 bun run start       # 运行打包产物（CLI 服务器）
 bun run login       # 设备码登录（见上文）
 bun run check       # typecheck + build

@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复托管构建失败（`Next.js output directory .next was not found`）：
+  `build` 脚本改为标准的 `next build`（托管框架默认构建命令），CLI 打包
+  移至 `build:cli`（并加 `prepublishOnly`，npm 发布仍自动产出
+  `dist/index.js`）
+
 ### Added
 
 - **托管部署（Next.js App Router）**：新增 `app/` 路由处理器

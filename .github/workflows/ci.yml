@@ -29,8 +29,8 @@ jobs:
       - name: Web build (Next.js App Router)
         run: bun run build:web
 
-      - name: Build
-        run: bun run build
+      - name: Build CLI bundle
+        run: bun run build:cli
 
       - name: Syntax-check tools
         run: |
