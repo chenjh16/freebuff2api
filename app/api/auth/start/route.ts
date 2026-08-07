@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requestLoginCode, LoginError } from "../../../../src/login.ts";
 import { getRuntime } from "../../../lib/proxy";
+import { createLoginTransaction, loginCookie } from "../../../lib/login-transaction";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,11 +15,14 @@ export async function POST(request: Request): Promise<Response> {
     }
     const { cfg } = await getRuntime();
     const code = await requestLoginCode(cfg.loginBaseURL, fingerprintId);
-    return NextResponse.json({
+    const tx = createLoginTransaction({ ...code, fingerprintId, createdAt: Date.now() });
+    const response = NextResponse.json({
       loginUrl: code.loginUrl,
       fingerprintHash: code.fingerprintHash,
       expiresAt: code.expiresAt,
     });
+    response.headers.set("Set-Cookie", loginCookie(tx.id));
+    return response;
   } catch (error) {
     const message = error instanceof LoginError ? error.message : error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 502 });

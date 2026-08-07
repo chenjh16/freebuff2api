@@ -8,10 +8,6 @@ export function GET(request: Request): Promise<Response> {
   return apiRoute(request);
 }
 
-export function POST(request: Request): Promise<Response> {
-  return apiRoute(request);
-}
-
 export function OPTIONS(): Response {
   return corsPreflight();
 }

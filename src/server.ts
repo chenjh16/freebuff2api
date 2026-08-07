@@ -1,7 +1,7 @@
 /**
  * OpenAI-compatible HTTP server (node:http adapter).
  *
- *   GET  /healthz               liveness + token/session state
+ *   GET  /healthz               public liveness status
  *   GET  /v1/models             available free models
  *   POST /v1/chat/completions   OpenAI chat completions → Freebuff backend
  *
@@ -37,7 +37,9 @@ export class Server {
   });
   private readonly handle: (request: Request) => Promise<Response>;
   private activeRequests = 0;
-  private waitingRequests: (() => void)[] = [];
+  private waitingRequests: { resolve: (release: () => void) => void; reject: (error: Error) => void }[] = [];
+  private closing = false;
+  private readonly maxWaitingRequests = 128;
 
   constructor(private readonly deps: ServerDeps) {
     this.handle = createHandler(deps);
@@ -55,6 +57,10 @@ export class Server {
   }
 
   close(): Promise<void> {
+    this.closing = true;
+    for (const waiter of this.waitingRequests.splice(0)) {
+      waiter.reject(new Error("server is shutting down"));
+    }
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
 
@@ -65,7 +71,14 @@ export class Server {
   }
 
   private async dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const release = await this.acquireRequestSlot();
+    let release: () => void;
+    try {
+      release = await this.acquireRequestSlot();
+    } catch {
+      writeOpenAIError(res, 503, "server is shutting down", "server_error", "server_closing");
+      req.resume();
+      return;
+    }
     const abort = new AbortController();
     try {
       const onAborted = () => abort.abort();
@@ -91,15 +104,19 @@ export class Server {
   }
 
   private acquireRequestSlot(): Promise<() => void> {
+    if (this.closing) return Promise.reject(new Error("server is shutting down"));
     const limit = this.deps.cfg.maxConcurrentRequests || DEFAULT_MAX_CONCURRENT_REQUESTS;
     if (this.activeRequests < limit) {
       this.activeRequests += 1;
       return Promise.resolve(() => this.releaseRequestSlot());
     }
-    return new Promise((resolve) => {
-      this.waitingRequests.push(() => {
-        this.activeRequests += 1;
-        resolve(() => this.releaseRequestSlot());
+    if (this.waitingRequests.length >= this.maxWaitingRequests) {
+      return Promise.reject(new Error("server request queue is full"));
+    }
+    return new Promise((resolve, reject) => {
+      this.waitingRequests.push({
+        resolve: (release) => resolve(release),
+        reject,
       });
     });
   }
@@ -107,7 +124,10 @@ export class Server {
   private releaseRequestSlot(): void {
     this.activeRequests = Math.max(0, this.activeRequests - 1);
     const next = this.waitingRequests.shift();
-    next?.();
+    if (next) {
+      this.activeRequests += 1;
+      next.resolve(() => this.releaseRequestSlot());
+    }
   }
 }
 

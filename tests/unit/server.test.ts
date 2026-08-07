@@ -136,12 +136,15 @@ describe("Server HTTP surface", () => {
     await server.close();
   });
 
-  test("GET /healthz returns ok and registry status", async () => {
+  test("GET /healthz returns only public liveness data", async () => {
     const resp = await fetch(`${base}/healthz`);
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { ok: boolean; models: { source: string } };
+    const body = (await resp.json()) as { ok: boolean; started_at: string; uptime_sec: number; tokens?: unknown; models?: unknown };
     expect(body.ok).toBe(true);
-    expect(body.models.source).toBe("fallback");
+    expect(body.started_at).toMatch(/T/);
+    expect(body.uptime_sec).toBeGreaterThanOrEqual(0);
+    expect(body.tokens).toBeUndefined();
+    expect(body.models).toBeUndefined();
   });
 
   test("GET /v1/models lists the registered models", async () => {
@@ -150,6 +153,13 @@ describe("Server HTTP surface", () => {
     const body = (await resp.json()) as { data: { id: string; object: string }[] };
     expect(body.data.map((m) => m.id)).toContain(MODEL);
     expect(body.data[0]?.object).toBe("model");
+  });
+
+  test("rejects non-GET methods on read-only endpoints", async () => {
+    const modelsResp = await fetch(`${base}/v1/models`, { method: "POST" });
+    expect(modelsResp.status).toBe(405);
+    const healthResp = await fetch(`${base}/healthz`, { method: "POST" });
+    expect(healthResp.status).toBe(405);
   });
 
   test("unknown endpoint returns 404 in OpenAI error shape", async () => {

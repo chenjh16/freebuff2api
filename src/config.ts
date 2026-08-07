@@ -9,7 +9,7 @@
  *   LISTEN_ADDR          - listen address, e.g. ":23333" (default ":23333")
  *   PORT                 - Freebuff-injected port; overrides the LISTEN_ADDR port
  *   UPSTREAM_BASE_URL    - Freebuff backend base URL (default "https://www.codebuff.com")
- *   AUTH_TOKENS          - comma-separated Freebuff auth tokens (REQUIRED)
+ *   AUTH_TOKENS          - comma-separated Freebuff auth tokens (required by default; hosted web mode may opt out)
  *   REQUEST_TIMEOUT      - upstream request timeout, Go duration syntax, e.g. "15m"
  *   ROTATION_INTERVAL    - how long a token pool stays preferred (default "6h")
  *   API_KEYS             - optional comma-separated keys clients must send to this proxy
@@ -224,7 +224,7 @@ function loadRawConfig(configPath?: string): RawConfig {
 }
 
 export interface LoadConfigOptions extends ConfigOverrides {
-  /** When false, missing auth tokens are allowed (used by `login`). Default true. */
+  /** When false, missing auth tokens are allowed (used by hosted web mode and `login`). Default true. */
   requireToken?: boolean;
 }
 

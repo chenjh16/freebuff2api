@@ -83,7 +83,7 @@ phrase.
 
 ## The fix
 
-`src/server.ts` gained `injectCliSystemMarker()`, which guarantees the system
+`src/handler.ts` gained `injectCliSystemMarker()`, which guarantees the system
 message carries the phrase before forwarding:
 
 1. If a system message already contains the target phrase → leave it alone

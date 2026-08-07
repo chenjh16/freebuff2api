@@ -51,7 +51,16 @@ export class RunManager {
     const current = this.runs.get(key);
     if (current && Date.now() - current.startedAt < this.rotationIntervalMs) return current.runId;
     const runId = await this.client.startRun(token, agentId, { signal });
+    const previous = this.runs.get(key);
     this.runs.set(key, { runId, startedAt: Date.now() });
+    if (previous && previous.runId !== runId) {
+      try {
+        await this.client.finishRun(token, previous.runId, { signal });
+        this.log(`[runs] finished rotated run ${previous.runId} (agent: ${agentId})`);
+      } catch {
+        // Rotation cleanup is best-effort; the new run remains usable.
+      }
+    }
     this.log(`[runs] started run ${runId} (agent: ${agentId})`);
     return runId;
   }

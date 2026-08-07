@@ -165,13 +165,13 @@ CLI option > `config.json` > environment variable**.
 
 | Env var             | Default                   | Description                                             |
 | ------------------- | ------------------------- | ------------------------------------------------------- |
-| `AUTH_TOKENS`       | *(required*¹*)*           | Comma-separated Freebuff auth tokens                    |
+| `AUTH_TOKENS`       | *(optional in hosted web mode)* | Comma-separated Freebuff auth tokens; standalone CLI needs this or saved login credentials |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com`| Freebuff backend base URL                              |
 | `LOGIN_BASE_URL`    | `https://freebuff.com`    | Base URL used by `freebuff2api login`                   |
 | `LISTEN_ADDR`       | `:23333`                 | Listen address (`PORT` env wins in managed workspaces) |
 | `REQUEST_TIMEOUT`   | `15m`                     | Upstream request timeout (Go-style durations)          |
 | `ROTATION_INTERVAL` | `6h`                      | How long an agent run lives before rotation            |
-| `API_KEYS`          | *(empty = open)*          | Comma-separated keys clients must present to the proxy |
+| `API_KEYS`          | *(empty = open in standalone; hosted empty = fail closed)* | Comma-separated keys clients must present to the proxy |
 | `SITE_ACCESS_TOKEN`| *(empty = gate off)*      | Hosted web console gate: visitors must enter this token (or open the site with `?token=…`) to use the console |
 | `HTTP_PROXY`        | *(empty)*                 | Optional upstream HTTP(S) proxy; `--http-proxy` > `config.json` > environment |
 | `MAX_BODY_SIZE`     | `16MB`                    | Maximum `/v1/chat/completions` body (16,000,000 bytes) |
@@ -179,8 +179,10 @@ CLI option > `config.json` > environment variable**.
 
 See [`config.example.json`](config.example.json) and [`env.example`](env.example).
 
-¹`AUTH_TOKENS` is required unless you have run `freebuff2api login`, in which
-case the saved credentials are used.
+In standalone CLI mode, `AUTH_TOKENS` is required unless you have run
+`freebuff2api login`, in which case the saved credentials are used. In hosted
+web-login mode it is optional: each visitor can sign in and receive a personal
+`sk-fb-*` key.
 
 The token is a freebuff.com account token (the same one your browser session
 uses). Keep it secret — it grants API usage on your account.
@@ -189,7 +191,7 @@ uses). Keep it secret — it grants API usage on your account.
 
 | Method | Path                     | Description                                  |
 | ------ | ------------------------ | -------------------------------------------- |
-| GET    | `/healthz`               | Liveness, model registry + token state       |
+| GET    | `/healthz`               | Public liveness status                       |
 | GET    | `/v1/models`             | Models currently available in free mode      |
 | POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
 
@@ -212,9 +214,9 @@ Deployment environment:
 
 | Var           | Required | Meaning                                                                 |
 | ------------- | -------- | ----------------------------------------------------------------------- |
-| `AUTH_TOKENS` | ✅       | Freebuff auth token(s); the proxy answers 503 until this is set         |
+| `AUTH_TOKENS` | no       | Optional shared Freebuff auth token pool; hosted web login works without it |
 | `PROXY_SECRET`| no       | Stable secret that encrypts web-login API keys (`sk-fb-…`); set a fixed value so keys survive redeploys |
-| `API_KEYS`    | no       | Client keys; **defaults to `sk-freebuff2api-2026`** on the hosted app    |
+| `API_KEYS`    | no       | Explicit client keys; hosted deployments fail closed when unset       |
 | `SITE_ACCESS_TOKEN`| no    | Locks the web console: visitors must enter this token (or arrive via `?token=…`) before the page unlocks; unset = console open |
 
 Every other variable from the configuration table above
@@ -226,7 +228,7 @@ freebuff-deploy start
 
 # point any OpenAI-compatible client at the public URL
 curl https://open.freebuff.app/v1/chat/completions \
-  -H "Authorization: Bearer sk-freebuff2api-2026" \
+  -H "Authorization: Bearer <your-explicit-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
@@ -241,8 +243,10 @@ Notes:
   `https://…/?token=…`); the browser then remembers it. Unset = console open.
   The gate is the console's front door only — `/v1` stays protected by
   `API_KEYS`.
-- `/healthz` answers `200 {ok:false, configured:false}` until `AUTH_TOKENS`
-  is set, so hosting health probes stay green while the proxy waits for config.
+- `/healthz` is public and liveness-only; it does not expose account ids,
+  token fragments, queue state, or model registry details. Hosted web login can
+  operate without `AUTH_TOKENS`; if the runtime cannot initialize, it answers
+  `200 {ok:false, configured:false}` while other proxy endpoints return a clear 503.
 - CORS is open on `/v1/*` so browser clients can call the endpoint directly.
 - The Freebuff account limit still applies: one session (1 hour) per account,
   locked to a single model. The proxy returns `409 model_locked` with the
@@ -423,13 +427,13 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 
 | 环境变量             | 默认值                       | 说明                                        |
 | ------------------- | ---------------------------- | ------------------------------------------- |
-| `AUTH_TOKENS`       | *(必需¹)*                    | 逗号分隔的 Freebuff auth token              |
+| `AUTH_TOKENS`       | *(托管网页登录模式可选)*     | 逗号分隔的 Freebuff auth token；独立 CLI 需要它或已保存的登录凭证 |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com`   | Freebuff 后端地址                           |
 | `LOGIN_BASE_URL`    | `https://freebuff.com`       | `freebuff2api login` 使用的 base URL        |
 | `LISTEN_ADDR`       | `:23333`                    | 监听地址（托管环境以 `PORT` 优先）           |
 | `REQUEST_TIMEOUT`   | `15m`                        | 上游请求超时（Go 风格时长）                 |
 | `ROTATION_INTERVAL` | `6h`                         | run 轮换间隔                                |
-| `API_KEYS`          | *(空 = 开放)*                | 客户端访问本代理需携带的 key                 |
+| `API_KEYS`          | *(独立模式空 = 开放；托管空值 = fail closed)* | 客户端访问本代理需携带的 key                 |
 | `SITE_ACCESS_TOKEN`| *(空 = 不启用)*             | 托管 Web 控制台门禁：访客须输入该 token（或用 `?token=…` 打开站点）才能使用控制台 |
 | `HTTP_PROXY`        | *(空)*                       | 可选的上游 HTTP(S) 代理；优先级为 `--http-proxy` > `config.json` > 环境变量 |
 | `MAX_BODY_SIZE`     | `16MB`                       | `/v1/chat/completions` 请求体上限（16,000,000 字节） |
@@ -438,8 +442,9 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 参见 [`config.example.json`](config.example.json) 与
 [`env.example`](env.example)。
 
-¹ 除非已运行 `freebuff2api login`（此时使用保存的凭证），否则
-`AUTH_TOKENS` 必需。
+独立 CLI 模式下，除非已运行 `freebuff2api login`（使用保存的凭证），否则
+`AUTH_TOKENS` 必需。托管网页登录模式可以不设置它，访客登录后使用自己的
+`sk-fb-*` key。
 
 token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密——它代表你
 账号的 API 使用权。
@@ -448,7 +453,7 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 
 | 方法 | 路径                     | 说明                                       |
 | ---- | ------------------------ | ------------------------------------------ |
-| GET  | `/healthz`               | 存活检查 + 模型注册表 + 令牌状态           |
+| GET  | `/healthz`               | 公开存活状态（仅 liveness）                 |
 | GET  | `/v1/models`             | 免费模式当前可用的模型                     |
 | POST | `/v1/chat/completions`   | OpenAI chat completions（支持流式）        |
 
@@ -469,9 +474,9 @@ handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 
 | 变量           | 必需 | 说明                                                                    |
 | ------------- | ---- | ----------------------------------------------------------------------- |
-| `AUTH_TOKENS` | ✅   | Freebuff auth token；未设置前代理返回 503                                |
+| `AUTH_TOKENS` | 否   | 可选的共享 Freebuff auth token 池；托管网页登录无需设置                 |
 | `PROXY_SECRET`| 否   | 加密网页登录 API Key（`sk-fb-…`）的稳定密钥；设置固定值可让 key 跨重新部署保持有效 |
-| `API_KEYS`    | 否   | 客户端 key；**托管应用默认 `sk-freebuff2api-2026`**                       |
+| `API_KEYS`    | 否   | 客户端显式高熵 key；未配置时托管 `/v1` fail closed                       |
 | `SITE_ACCESS_TOKEN`| 否 | 网页控制台门禁：访客须输入该 token（或带 `?token=…` 访问）才能解锁页面；未设置 = 控制台开放 |
 
 配置表中的其它变量（`UPSTREAM_BASE_URL`、`REQUEST_TIMEOUT` …）在托管环境
@@ -483,7 +488,7 @@ freebuff-deploy start
 
 # 把任何 OpenAI 兼容客户端指向公开地址
 curl https://open.freebuff.app/v1/chat/completions \
-  -H "Authorization: Bearer sk-freebuff2api-2026" \
+  -H "Authorization: Bearer <your-explicit-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
@@ -497,8 +502,9 @@ curl https://open.freebuff.app/v1/chat/completions \
   输入 token（或通过 `https://…/?token=…` 打开）才能进入；浏览器会记住
   该 token。未设置则控制台保持开放。门禁只是控制台的"前门"——`/v1`
   接口仍由 `API_KEYS` 保护。
-- `AUTH_TOKENS` 未配置前 `/healthz` 返回 `200 {ok:false, configured:false}`，
-  让托管健康检查保持绿色，同时代理等待配置。
+- `/healthz` 始终公开；托管网页登录可以不配置 `AUTH_TOKENS`。若运行时无法
+  建立处理器，则返回 `200 {ok:false, configured:false}`，其它代理端点返回明确
+  的 503。
 - `/v1/*` 开放 CORS，浏览器客户端可直接调用。
 - Freebuff 账号限制仍然适用：每个账号同一时间只有一个会话（1 小时）且
   锁定单一模型；代理返回 `409 model_locked` 并附上锁定模型名，而不是

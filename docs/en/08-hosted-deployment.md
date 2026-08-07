@@ -32,7 +32,7 @@ CLI-gate system-marker injection).
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | GET | `/` | Landing page: sign in, API key dashboard, model playground |
-| GET | `/healthz` | Liveness + model registry + token/session state |
+| GET | `/healthz` | Public liveness status |
 | GET | `/v1/models` | Free models currently served |
 | POST | `/v1/chat/completions` | Chat — JSON or SSE stream |
 | POST | `/api/auth/start` | Start a device-code login (web) |
@@ -48,9 +48,9 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 
 | Var | Required | Default | Meaning |
 | --- | -------- | ------- | ------- |
-| `AUTH_TOKENS` | ✅ | — | Freebuff auth token(s), comma-separated. Until set, the proxy answers `503` with a clear message. |
+| `AUTH_TOKENS` | no | saved login credentials (standalone only) | Shared Freebuff auth token(s), comma-separated. Optional when users sign in through the hosted web console; needed to provide a shared token pool. |
 | `PROXY_SECRET` | no | auto | Stable secret that encrypts web-login API keys (`sk-fb-…`). Set a fixed value so keys survive redeploys. |
-| `API_KEYS` | no | `sk-freebuff2api-2026` | Keys clients must present. The hosted app falls back to this default so the public endpoint is never left open; set the env var to override. |
+| `API_KEYS` | no | empty (fail closed) | Explicit high-entropy keys clients must present. Hosted `/v1` requests are rejected until this is configured, preventing a published default credential. |
 | `SITE_ACCESS_TOKEN` | no | — | Gate token(s) for the web console, comma-separated. When set, visitors must present one (typed into the lock screen or via `?token=…`) to unlock the site. |
 | `UPSTREAM_BASE_URL` | no | `https://www.codebuff.com` | Freebuff backend base URL. |
 | `REQUEST_TIMEOUT` | no | `15m` | Upstream request timeout. |
@@ -70,14 +70,18 @@ itself — the flow mirrors `freebuff2api login`:
 1. The page requests a one-time device-code link (`POST /api/auth/start`),
    opens it in a new tab and polls `GET /api/auth/status` until the user
    signs in on freebuff.com.
-2. The account token is validated with `GET /api/v1/me`, then an API key of
-   the form `sk-fb-…` is minted — the account token encrypted with
-   AES-256-GCM using a server secret (`PROXY_SECRET`, see below).
+2. The server polls the upstream and keeps the resulting account token in a
+   short-lived, HttpOnly-cookie-bound login transaction. The browser never
+   receives the raw token. Registration validates it with `GET /api/v1/me`,
+   then mints an API key of the form `sk-fb-…` encrypted with AES-256-GCM.
 3. The proxy resolves any `sk-fb-…` key back to the account token per
    request, so OpenAI-compatible clients only ever need the API key; each
    key's sessions/quota belong to its own freebuff.com account.
-4. **Sign out** on the site revokes the key (in-memory) and clears the
-   browser copy; the next login mints a fresh key.
+4. **Sign out** on the site revokes the key in the current server process and
+   clears the browser copy; the next login mints a fresh key. Because hosted
+   instances may be ephemeral or horizontally scaled, revocation is not a
+   durable cross-instance session store. Use a stable `PROXY_SECRET` and a
+   real shared state store if durable revocation is a requirement.
 
 So `AUTH_TOKENS` is **optional** in hosted mode: it only feeds the shared
 pool used by the default `API_KEYS`. The key-encryption secret is derived
@@ -110,10 +114,11 @@ allowed). The page then shows a lock screen:
 > `AUTH_TOKENS` is your **freebuff.com account token** (the token your
 > freebuff.com account uses; get it with `freebuff2api login`, or from your
 > browser session on freebuff.com). `API_KEYS` is the key **your clients**
-> send as `Authorization: Bearer` (defaults to `sk-freebuff2api-2026`).
-> Setting `AUTH_TOKENS` to the proxy API key makes the upstream API answer
-> `401 Invalid API key` on `/v1/chat/completions` — the proxy stays healthy
-> but cannot admit a session with that token.
+> send as `Authorization: Bearer`; hosted deployments must provision it
+> explicitly with a high-entropy value. Leaving it unset makes hosted `/v1`
+> requests fail closed. Setting `AUTH_TOKENS` to the proxy API key makes the
+> upstream API answer `401 Invalid API key` on `/v1/chat/completions` — the
+> proxy stays healthy but cannot admit a session with that token.
 
 ## Deploying
 
@@ -134,21 +139,23 @@ curl https://open.freebuff.app/healthz
 
 # models (authenticated)
 curl https://open.freebuff.app/v1/models \
-  -H "Authorization: Bearer sk-freebuff2api-2026"
+  -H "Authorization: Bearer <your-explicit-api-key>"
 
 # chat (streaming)
 curl https://open.freebuff.app/v1/chat/completions \
-  -H "Authorization: Bearer sk-freebuff2api-2026" \
+  -H "Authorization: Bearer <your-explicit-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 ## Behavior notes
 
-- **Health probes:** `/healthz` answers `200 {ok:false, configured:false}`
-  until `AUTH_TOKENS` is set, so hosting health checks stay green while the
-  proxy waits for configuration. All other endpoints return a 503 with the
-  exact reason.
+- **Health probes:** `/healthz` remains public and liveness-only; it does not
+  expose account ids, token fragments, queue state, or model registry details.
+  In hosted mode, web-login operation can work without `AUTH_TOKENS`; a shared token pool or standalone
+  CLI still needs `AUTH_TOKENS` (or saved CLI credentials). If the runtime
+  cannot build a usable handler, `/healthz` answers `200 {ok:false,
+  configured:false}` and other proxy endpoints return a clear 503.
 - **CORS:** open on `/v1/*` (preflight answered with `204`), so browser-based
   OpenAI clients can call the endpoint directly.
 - **Streaming:** SSE responses pass through; the chat route allows long-lived
@@ -158,7 +165,9 @@ curl https://open.freebuff.app/v1/chat/completions \
   the session is pinned returns `409 model_locked` naming the locked model
   (the proxy never masks it as a 503).
 - **State:** the session pool / run manager / model registry live in the
-  server process; a cold start (redeploy) re-acquires everything lazily.
+  server process; a cold start (redeploy) re-acquires everything lazily. API-key
+  revocation is also process-local; durable cross-instance revocation requires a
+  shared state store.
 - **Scaling:** a single account = a single concurrent session, so the hosted
   endpoint serves one model at a time. Multiple `AUTH_TOKENS` in the deploy
   env let the proxy round-robin across several accounts.
@@ -166,7 +175,7 @@ curl https://open.freebuff.app/v1/chat/completions \
 ## Local development of the hosted app
 
 ```bash
-bun run dev        # next dev — same /v1 surface + landing console
+bun run dev:web    # next dev — same /v1 surface + landing console
 bun run build:web  # next build — the artifact hosting builds
 ```
 
@@ -181,4 +190,4 @@ can reach it. Freebuff-injected `PORT` overrides the port automatically (do
 not pass `-p`, and do not use bare `-` arguments — `next dev` would treat
 them as a project directory and fail).
 
-The CLI server is unchanged: `bun run dev:cli` (or `bun run start`).
+The CLI server is unchanged: `bun run dev:cli` (or `bun run start`). The package's `dev` alias is also the Next.js app; use `dev:cli` for the standalone proxy.

@@ -15,7 +15,6 @@ const GITHUB_API_URL = "https://api.github.com/repos/chenjh16/freebuff2api";
 // ---------------------------------------------------------------------------
 
 interface Session {
-  authToken: string;
   apiKey: string;
   user: { id?: string | null; name?: string | null; email?: string | null };
 }
@@ -193,19 +192,19 @@ export default function Home() {
   }, [session, authHeaders, model]);
 
   const finishRegister = useCallback(
-    async (authToken: string) => {
+    async (transactionId: string) => {
       setLoginBusy(true);
       try {
         const resp = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ authToken }),
+          body: JSON.stringify({ transactionId }),
         });
         const body = (await resp.json().catch(() => null)) as { apiKey?: string; user?: Session["user"]; error?: string } | null;
         if (!resp.ok || !body?.apiKey) {
           throw new Error(body?.error ?? `register failed (${resp.status})`);
         }
-        const next: Session = { authToken, apiKey: body.apiKey, user: body.user ?? { email: null } };
+        const next: Session = { apiKey: body.apiKey, user: body.user ?? { email: null } };
         writeStored(SESSION_KEY, next);
         setSession(next);
         setPending(null);
@@ -233,17 +232,11 @@ export default function Home() {
   const pollStatus = useCallback(
     async (p: PendingLogin) => {
       try {
-        const params = new URLSearchParams({
-          fingerprintId: p.fingerprintId,
-          fingerprintHash: p.fingerprintHash,
-          expiresAt: String(p.expiresAt),
-          loginUrl: p.loginUrl,
-        });
-        const resp = await fetch(`/api/auth/status?${params.toString()}`, { cache: "no-store" });
-        const body = (await resp.json().catch(() => null)) as { user?: { authToken?: string } } | null;
-        if (resp.ok && body?.user?.authToken) {
+        const resp = await fetch("/api/auth/status", { cache: "no-store" });
+        const body = (await resp.json().catch(() => null)) as { transactionId?: string } | null;
+        if (resp.ok && body?.transactionId) {
           stopPolling();
-          void finishRegister(body.user.authToken);
+          void finishRegister(body.transactionId);
           return true;
         }
         if (p.expiresAt > 0 && Date.now() > p.expiresAt) {
@@ -293,6 +286,8 @@ export default function Home() {
         expiresAt: body.expiresAt ?? 0,
         loginUrl: body.loginUrl,
       };
+      // The transaction is held in an HttpOnly cookie on the server; pending
+      // browser state is only UI metadata and contains no account credential.
       writeStored(PENDING_KEY, p);
       setPending(p);
       setWaiting(true);
@@ -345,32 +340,19 @@ export default function Home() {
         return; // stay locked — do not touch session/pending state
       }
 
-      const stored = readStored<Session>(SESSION_KEY);
-      if (stored?.authToken) {
-        try {
-          const resp = await fetch("/api/auth/register", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ authToken: stored.authToken }),
-          });
-          const body = (await resp.json().catch(() => null)) as { apiKey?: string; user?: Session["user"] } | null;
-          if (resp.ok && body?.apiKey) {
-            const next: Session = { ...stored, apiKey: body.apiKey, user: body.user ?? stored.user };
-            writeStored(SESSION_KEY, next);
-            if (!cancelled) setSession(next);
-          } else {
-            clearStored(SESSION_KEY);
-          }
-        } catch {
-          // Network error — keep the stored session and let the first API
-          // call surface any problem.
-          if (!cancelled) setSession(stored);
-        }
+      // Only the derived API key and non-sensitive profile are persisted. The
+      // upstream account token is never returned to or stored by the browser.
+      // Discard the legacy record if it contains only the old raw token.
+      const stored = readStored<Partial<Session> & { authToken?: unknown }>(SESSION_KEY);
+      if (stored?.apiKey && typeof stored.apiKey === "string") {
+        const next: Session = { apiKey: stored.apiKey, user: stored.user ?? { email: null } };
+        writeStored(SESSION_KEY, next);
+        if (!cancelled) setSession(next);
+      } else if (stored) {
+        clearStored(SESSION_KEY);
       }
-      if (!cancelled) {
-        if (!readStored(SESSION_KEY)) await resumePending();
-        setBooting(false);
-      }
+      if (!cancelled && !stored?.apiKey) await resumePending();
+      if (!cancelled) setBooting(false);
     })();
     return () => {
       cancelled = true;
@@ -393,6 +375,8 @@ export default function Home() {
     setOutputError(false);
     const controller = new AbortController();
     abortRef.current = controller;
+    let streamedOutput = "";
+    let streamedThinking = "";
     try {
       const resp = await fetch("/v1/chat/completions", {
         method: "POST",
@@ -431,14 +415,20 @@ export default function Home() {
             const c = chunk.choices?.[0];
             const delta = c?.delta?.content ?? c?.message?.content ?? "";
             const reason = c?.delta?.reasoning_content ?? c?.message?.reasoning_content ?? "";
-            if (reason) setThinking((prev) => prev + reason);
-            if (delta) setOutput((prev) => prev + delta);
+            if (reason) {
+              streamedThinking += reason;
+              setThinking((prev) => prev + reason);
+            }
+            if (delta) {
+              streamedOutput += delta;
+              setOutput((prev) => prev + delta);
+            }
           } catch {
             // Ignore malformed frames.
           }
         }
       }
-      if (!output && !thinking) setOutput("(no content in stream)");
+      if (!streamedOutput && !streamedThinking) setOutput("(no content in stream)");
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         setOutput((prev) => (prev ? prev + "\n\n⏹ stopped" : "⏹ stopped"));
@@ -450,7 +440,7 @@ export default function Home() {
       setRunning(false);
       abortRef.current = null;
     }
-  }, [session, prompt, running, model, authHeaders, output, thinking]);
+  }, [session, prompt, running, model, authHeaders]);
 
   const stopChat = useCallback(() => abortRef.current?.abort(), []);
 

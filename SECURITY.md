@@ -18,7 +18,22 @@ Issue，直接发送邮件或私信项目维护者，并包含：
   请勿用于抓取他人数据
 - 生产环境请通过托管环境变量（而非 `.env` 文件）注入 `AUTH_TOKENS`
 
-## 依赖
+## Hosted deployment safeguards
 
-本项目运行时零第三方依赖；开发依赖仅 `typescript` 与 `@types/bun`。
-请关注上游（`CodebuffAI/freebuff`、freebuff.com）的安全公告。
+- Hosted `/v1` access is fail-closed when `API_KEYS` is unset; provision a
+  high-entropy key through the deployment secret manager rather than relying on
+  a published default.
+- The web device-code flow keeps the upstream `authToken` server-side in a
+  short-lived transaction and only returns the derived `sk-fb-*` client key.
+- Public `/healthz` is liveness-only and does not expose account ids, token
+  fragments, queue state, or model registry details.
+- API-key revocation is process-local. Set a stable `PROXY_SECRET` for key
+  decryption across restarts, and use shared state if durable cross-instance
+  revocation is required.
+
+## Dependencies
+
+The repository contains a Next.js hosted application and therefore has Next.js
+and React runtime dependencies. The standalone proxy itself uses only built-in
+Node/Bun APIs. Please follow security advisories for Next.js, React, the
+`CodebuffAI/freebuff` upstream, and freebuff.com.

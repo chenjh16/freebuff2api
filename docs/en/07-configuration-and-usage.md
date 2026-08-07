@@ -15,7 +15,7 @@ bun run login
 # Option B: provide a token directly
 # export AUTH_TOKENS="<your freebuff.com token>"
 
-bun run dev        # or bun run src/index.ts
+bun run dev:cli    # standalone proxy; `bun run dev` is the hosted Next.js app
 ```
 
 ```bash
@@ -37,13 +37,13 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 
 | Variable | Default | Description |
 | ---- | ------ | ---- |
-| `AUTH_TOKENS` | login credentials | Comma-separated Freebuff tokens; rotation across tokens + 401 cooldown |
+| `AUTH_TOKENS` | saved login credentials | Comma-separated Freebuff tokens; required by the standalone CLI, optional in hosted web-login mode |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com` | Upstream backend URL |
 | `LOGIN_BASE_URL` | `https://freebuff.com` | Base URL for the login flow |
 | `LISTEN_ADDR` | `:23333` | Listen address (affected by `PORT` in managed environments) |
 | `REQUEST_TIMEOUT` | `15m` | Upstream request timeout (Go-style durations) |
 | `ROTATION_INTERVAL` | `6h` | Run rotation interval |
-| `API_KEYS` | empty = open | Optional keys clients must present to the proxy |
+| `API_KEYS` | empty = open in standalone; hosted empty = fail closed | Explicit keys clients must present; configure high-entropy values for hosted deployments |
 | `SITE_ACCESS_TOKEN` | empty = gate off | Hosted web console gate token(s), comma-separated. When set, visitors must present one (typed into the lock screen, or via `?token=…`) to unlock the site |
 | `HTTP_PROXY` | empty | Upstream HTTP(S) proxy; precedence is `--http-proxy` > config.json > environment |
 | `MAX_BODY_SIZE` | `16MB` | Maximum chat request body (16,000,000 bytes) |
@@ -86,12 +86,14 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 | Method | Path | Description |
 | ---- | ---- | ---- |
-| GET | `/healthz` | Liveness + model registry + per-token session state |
+| GET | `/healthz` | Public liveness status |
 | GET | `/v1/models` | Available models (OpenAI format) |
 | POST | `/v1/chat/completions` | Chat (streaming / non-streaming) |
 
 ## Deployment notes
 
+- `AUTH_TOKENS` is required for the standalone CLI unless a saved `freebuff2api login` credential is available. It is optional for the hosted Next.js app because each visitor can use web login and a personal `sk-fb-*` key.
+- Hosted `/v1` fails closed when `API_KEYS` is unset; provision an explicit high-entropy value before exposing the endpoint.
 - Build artifact: `bun run build:cli` → `dist/index.js` (pointed to by
   `bin.freebuff2api` in `package.json`)
 - Production (hosted): hosting detects the Next.js app and builds it with

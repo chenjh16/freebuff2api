@@ -2,7 +2,7 @@
  * Web-native request handler for the freebuff2api proxy.
  *
  * Implements the same OpenAI-compatible surface as the CLI server
- * (`GET /healthz`, `GET /v1/models`, `POST /v1/chat/completions`) but against
+ * (`GET /healthz` liveness-only, `GET /v1/models`, `POST /v1/chat/completions`) but against
  * the standard Web `Request`/`Response` API, so the exact same code path can
  * be served by:
  *   - the standalone node:http server (`src/server.ts`, CLI / `bun run src/index.ts`)
@@ -81,8 +81,14 @@ export function createHandler(deps: HandlerDeps): (request: Request) => Promise<
 
     switch (path) {
       case "/healthz":
+        if (request.method !== "GET") {
+          return openAIError(405, "method not allowed", "invalid_request_error", "");
+        }
         return healthz(deps, startedAt);
       case "/v1/models":
+        if (request.method !== "GET") {
+          return openAIError(405, "method not allowed", "invalid_request_error", "");
+        }
         return models(deps, startedAt);
       case "/v1/chat/completions":
         return chatCompletions(deps, request);
@@ -119,15 +125,13 @@ export function isAuthorized(
 }
 
 function healthz(deps: HandlerDeps, startedAt: number): Response {
+  // Keep the public liveness contract deliberately small. Detailed model and
+  // session state can contain account/queue identifiers and belongs in private
+  // telemetry, not an unauthenticated endpoint.
   return json(200, {
     ok: true,
     started_at: new Date(startedAt).toISOString(),
     uptime_sec: Math.floor((Date.now() - startedAt) / 1000),
-    upstream: deps.cfg.upstreamBaseURL,
-    user_agent: deps.cfg.userAgent,
-    acting_user_id: deps.cfg.actingUserId,
-    models: deps.registry.status(),
-    tokens: deps.tokens.snapshots(),
   });
 }
 
@@ -158,15 +162,15 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
 
   let rawBody: string;
   try {
-    rawBody = await request.text();
+    rawBody = await readBodyLimited(request, maxBodyBytes, signal);
   } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
+    }
     if (signal.aborted) {
       return openAIError(499, "client closed request", "server_error", "");
     }
     throw error;
-  }
-  if (rawBody.length > maxBodyBytes) {
-    return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
   }
 
   let payload: Record<string, unknown>;
@@ -347,6 +351,42 @@ function openAIError(
     headers.set("Retry-After", String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
   }
   return new Response(JSON.stringify({ error }), { status: statusCode, headers });
+}
+
+class BodyTooLargeError extends Error {
+  constructor() {
+    super("request body too large");
+    this.name = "BodyTooLargeError";
+  }
+}
+
+async function readBodyLimited(request: Request, maxBytes: number, signal: AbortSignal): Promise<string> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      if (signal.aborted) throw new DOMException("client closed request", "AbortError");
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new BodyTooLargeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function json(status: number, payload: unknown): Response {

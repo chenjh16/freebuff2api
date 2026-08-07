@@ -7,6 +7,8 @@
 
 ### Fixed
 
+- 统一 hosted/standalone 配置文档：明确 hosted Web 登录无需 `AUTH_TOKENS`，并修正 `config.example.json`、CLI 构建命令和 CLI 标记注入模块引用。
+- 只读的 `/healthz` 与 `/v1/models` 路由现在在共享 handler 中严格拒绝非 GET 方法，并补充回归测试。
 - **网页登录 API Key 跨进程/重启失效（`invalid proxy api key` 401）**：
   `sk-fb-*` key 的 AES 密钥原本在 `PROXY_SECRET`/`AUTH_TOKENS` 均未设置时
   退化为每进程随机（`ephemeral:${pid}:${Date.now()}`），导致在服务器实例
@@ -49,17 +51,19 @@
   （`/healthz`、`/v1/models`、`/v1/chat/completions`）与在线控制台首页，
   通过 `src/handler.ts` 与 CLI 服务器共享完全相同的请求处理路径；
   `bun run build:web`（`next build`）直接产出可部署产物
-- 托管默认代理 key：`API_KEYS` 未配置时默认 `sk-freebuff2api-2026`
-  （环境变量可覆盖），公开端点不会裸奔
+- 托管代理鉴权改为 fail closed：`API_KEYS` 未配置时拒绝 `/v1` 请求，不再
+  发布或使用可预测的共享默认 key；公开前必须配置高熵客户端 key
 - `/v1/*` 开放 CORS（预检 204），浏览器客户端可直接调用
 - `AUTH_TOKENS` 未配置时 `/healthz` 保持 `200 {ok:false, configured:false}`
-  以维持托管健康检查，其余端点返回明确的 503 配置错误
+  以维持托管健康检查，其余端点返回明确的 503 配置错误；健康响应不再暴露
+  token/session/model 详情
 - `/healthz` 恒为公开端点（不受代理 key 鉴权），托管健康检查与状态探测
   始终可用；只有 `/v1/*` 才要求 `Authorization`/`x-api-key`
 - 单元测试 `tests/unit/web-proxy.test.ts`：默认 key 解析、CORS 预检、
   未配置 handler 行为；`tests/unit/account.test.ts`（sk-fb-* key 加解密/
   吊销）与 server 用户 key 流程测试
 - **站点访问门禁（`SITE_ACCESS_TOKEN`）**：托管 Web 控制台可选的前门鉴权。
+- 修复网页登录凭证暴露：原始 `authToken` 仅保存在服务端短期登录事务中，浏览器只接收派生的 `sk-fb-*` key。
   在部署环境设置 `SITE_ACCESS_TOKEN`（逗号分隔，支持多个）后，访问站点
   会先显示锁屏，访客须输入有效 token（或直接用 `https://…/?token=…`
   打开站点）才能解锁；验证通过后浏览器将 token 保存在 `localStorage`，

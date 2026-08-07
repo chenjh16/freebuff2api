@@ -118,10 +118,12 @@ describe.skipIf(!CREDS_OK)("API end-to-end (live Freebuff upstream)", () => {
   test("GET /healthz reports ready", async () => {
     const resp = await fetch(`${BASE}/healthz`);
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { ok: boolean; models: { source: string }; tokens: Record<string, unknown> };
+    const body = (await resp.json()) as { ok: boolean; started_at: string; uptime_sec: number; tokens?: unknown; models?: unknown };
     expect(body.ok).toBe(true);
-    expect(["remote", "fallback"]).toContain(body.models.source);
-    expect(typeof body.tokens).toBe("object");
+    expect(body.started_at).toMatch(/T/);
+    expect(body.uptime_sec).toBeGreaterThanOrEqual(0);
+    expect(body.tokens).toBeUndefined();
+    expect(body.models).toBeUndefined();
   });
 
   test("GET /v1/models includes the free flash model", async () => {

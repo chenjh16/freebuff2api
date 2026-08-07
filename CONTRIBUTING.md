@@ -4,8 +4,8 @@
 
 ## 项目概览
 
-- 技术栈：TypeScript + Bun（零运行时依赖）
-- 入口：`src/index.ts`
+- 技术栈：TypeScript + Bun（核心代理零运行时依赖；托管控制台使用 Next.js）
+- 入口：`src/index.ts`（CLI）与 `app/`（托管 Web）
 - 文档：`docs/zh/`（中文）与 `docs/en/`（英文，内容语义一致），工具：`tools/`（调试脚本）
 - 逆向依据：官方 [CodebuffAI/freebuff](https://github.com/CodebuffAI/freebuff)
 
@@ -14,9 +14,11 @@
 ```bash
 bun install
 bun run typecheck    # 类型检查
-bun run dev          # 开发模式启动
-bun run login        # 登录（首次需要）
-bun run build        # 打包到 dist/
+bun run dev:web      # Next.js 托管控制台（预览命令可用：bun run dev:web -- -H 0.0.0.0）
+bun run dev:cli      # 独立 CLI 代理（监听 :23333）
+bun run login        # CLI 设备码登录（首次需要）
+bun run build:web    # Next.js 托管构建
+bun run build:cli    # CLI bundle -> dist/index.js
 ```
 
 ### 提交前检查

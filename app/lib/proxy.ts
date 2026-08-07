@@ -5,7 +5,7 @@
  * request handler as the standalone CLI server (`src/handler.ts`) behind
  * Next.js App Router route handlers:
  *
- *   GET  /healthz               liveness + token/session state
+ *   GET  /healthz               liveness-only status
  *   GET  /v1/models             available free models
  *   POST /v1/chat/completions   OpenAI chat completions → Freebuff backend
  *   POST /api/auth/start        start a device-code login (web login flow)
@@ -29,24 +29,22 @@ import { TokenManager } from "../../src/session.ts";
 import { RunManager } from "../../src/runs.ts";
 import { resolveApiKeyToken } from "./account.ts";
 
-/** Default proxy API key used by the hosted deployment when API_KEYS is unset. */
-export const DEFAULT_API_KEYS = ["sk-freebuff2api-2026"];
-
 function log(message: string): void {
   console.log(`[freebuff2api] ${message}`);
 }
 
 /**
  * Resolve the proxy API keys from the environment, falling back to the hosted
- * deployment default. Exported as a pure function so unit tests can verify the
- * precedence without touching process.env.
+ * environment. An unset value intentionally produces an empty list: hosted
+ * web-login keys are resolved separately, while shared keys must be explicitly
+ * provisioned rather than relying on a predictable public credential.
  */
 export function resolveApiKeys(env: Record<string, string | undefined>): string[] {
   const raw = env.API_KEYS;
   if (raw && raw.trim()) {
     return [...new Set(raw.split(/[,;\n\r]/).map((item) => item.trim()).filter((item) => item.length > 0))];
   }
-  return [...DEFAULT_API_KEYS];
+  return [];
 }
 
 let handlerPromise: Promise<(request: Request) => Promise<Response>> | null = null;
@@ -73,14 +71,9 @@ let runtimePromise: Promise<{ cfg: Config; client: UpstreamClient }> | null = nu
 export function getRuntime(): Promise<{ cfg: Config; client: UpstreamClient }> {
   if (!runtimePromise) {
     runtimePromise = (async () => {
-      // Hosted default: protect the public endpoint with the deploy API key
-      // when API_KEYS is not explicitly configured. An explicit env value
-      // wins. requireToken:false keeps the site functional in per-user
-      // (web-login) mode even with no AUTH_TOKENS.
-      const cfg = loadConfig({
-        requireToken: false,
-        ...(process.env.API_KEYS?.trim() ? {} : { apiKeys: DEFAULT_API_KEYS }),
-      });
+      // Hosted web-login mode is intentionally token-optional. Shared client
+      // keys, when desired, must be explicitly configured via API_KEYS.
+      const cfg = loadConfig({ requireToken: false });
       const client = new UpstreamClient({
         baseURL: cfg.upstreamBaseURL,
         requestTimeoutMs: cfg.requestTimeoutMs,

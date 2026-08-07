@@ -44,7 +44,8 @@ src/
   session.ts    session pool management (SessionPool / TokenManager / token cooldown)
   runs.ts       run management (start, reuse, rotation, finish)
   models.ts     model registry (syncs the official Agent→model mapping)
-  server.ts     OpenAI-compatible HTTP server (incl. CLI gate marker injection)
+  server.ts     node:http adapter for the shared request handler
+  handler.ts    shared Request→Response routing, auth, validation, and CLI marker injection
 docs/            bilingual documentation (zh/ + en/)
 tools/           debugging & analysis scripts (see tools/README.md)
 ```
@@ -59,13 +60,14 @@ tools/           debugging & analysis scripts (see tools/README.md)
 | `session.ts` | One `SessionPool` per token; `TokenManager` handles rotation and cooldown |
 | `runs.ts` | `RunManager` caches runId per (token, agent), rotates when expired |
 | `models.ts` | Fetches the official `free-agents.ts` from GitHub and parses the Agent→model mapping (6h refresh) |
-| `server.ts` | `/healthz`, `/v1/models`, `/v1/chat/completions`; injects the CLI marker |
+| `handler.ts` | Shared `/healthz`, `/v1/models`, `/v1/chat/completions` routing, auth, validation, and CLI marker injection |
+| `server.ts` | Adapts node:http streams to the shared web-native handler |
 
 ## Public surface
 
 | Method | Path | Description |
 | ---- | ---- | ---- |
-| GET | `/healthz` | Liveness + model registry + per-token session state |
+| GET | `/healthz` | Public liveness status |
 | GET | `/v1/models` | Models currently available in free mode |
 | POST | `/v1/chat/completions` | OpenAI-compatible chat (streaming supported) |
 

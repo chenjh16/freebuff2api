@@ -5,14 +5,13 @@ import {
   corsPreflight,
   resolveApiKeys,
   unconfiguredHandler,
-  DEFAULT_API_KEYS,
 } from "../../app/lib/proxy.ts";
 
-describe("resolveApiKeys (hosted deployment default)", () => {
-  test("falls back to the deploy default when API_KEYS is unset", () => {
-    expect(resolveApiKeys({})).toEqual(DEFAULT_API_KEYS);
-    expect(resolveApiKeys({ API_KEYS: "" })).toEqual(DEFAULT_API_KEYS);
-    expect(resolveApiKeys({ API_KEYS: "   " })).toEqual(DEFAULT_API_KEYS);
+describe("resolveApiKeys (hosted deployment)", () => {
+  test("fails closed when API_KEYS is unset", () => {
+    expect(resolveApiKeys({})).toEqual([]);
+    expect(resolveApiKeys({ API_KEYS: "" })).toEqual([]);
+    expect(resolveApiKeys({ API_KEYS: "   " })).toEqual([]);
   });
 
   test("prefers an explicit API_KEYS value", () => {
