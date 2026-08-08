@@ -14,6 +14,16 @@
   - chat 请求：`ai-sdk/openai-compatible/<ver>/codebuff ai-sdk/provider-utils/<ver> runtime/browser`
 - 调试：`DEBUG_UPSTREAM=1` 时打印每个上游请求的头与 body（token 脱敏）
 
+## OpenCode 公共兼容上游
+
+代理有两条上游链路。对白名单中的公共模型，默认先调用
+`https://opencode.ai/zen/v1/chat/completions`；设置
+`PUBLIC_UPSTREAM_ENABLED=false` 可关闭。该端点受 HTTPS 主机白名单保护，
+代理只发送 OpenAI 兼容 JSON body，不会发送下游 `Authorization`、`x-api-key`、
+Cookie 或 Freebuff 账号 token。超时以及瞬态 `401/408/425/429/5xx` 会在响应头
+提交前回退到 Freebuff 认证链路；普通 `4xx` 直接返回。由于请求 body 会发送给
+OpenCode，部署前请确认其服务条款与隐私要求。
+
 ## 端点一览
 
 | 方法 | 路径 | 说明 |

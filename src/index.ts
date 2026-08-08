@@ -10,6 +10,7 @@ import { RunManager } from "./runs.ts";
 import { Server } from "./server.ts";
 import { TokenManager } from "./session.ts";
 import { UpstreamClient } from "./upstream.ts";
+import { PublicUpstreamClient } from "./public-upstream.ts";
 import { LoginError, runLoginCommand } from "./login.ts";
 
 export interface CLIOptions extends LoadConfigOptions {
@@ -46,6 +47,9 @@ Environment/configuration:
   HTTP_PROXY                 proxy precedence: CLI > config.json > environment
   MAX_BODY_SIZE              default 16MB
   MAX_CONCURRENT_REQUESTS    default 32
+  PUBLIC_UPSTREAM_ENABLED     default true; set false to disable OpenCode public models
+  PUBLIC_UPSTREAM_MODELS      comma-separated allowlist for public models
+  PUBLIC_UPSTREAM_TIMEOUT     default 20s
 
 Examples:
   freebuff2api --port 23333
@@ -161,11 +165,19 @@ async function main(): Promise<void> {
   await registry.start();
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
-  const server = new Server({ cfg, client, registry, tokens, runs, log });
+  const publicUpstream = cfg.publicUpstreamEnabled
+    ? new PublicUpstreamClient({
+        baseURL: cfg.publicUpstreamBaseURL,
+        models: cfg.publicUpstreamModels,
+        timeoutMs: cfg.publicUpstreamTimeoutMs,
+      })
+    : undefined;
+  const server = new Server({ cfg, client, publicUpstream, registry, tokens, runs, log });
 
   log(`upstream: ${cfg.upstreamBaseURL}`);
   log(`tokens: ${cfg.authTokens.length} configured, api keys: ${cfg.apiKeys.length > 0 ? "required" : "open"}`);
   log(`request body limit: ${cfg.maxBodyBytes} bytes; concurrency limit: ${cfg.maxConcurrentRequests}`);
+  log(`public upstream: ${cfg.publicUpstreamEnabled ? `${cfg.publicUpstreamBaseURL} (${cfg.publicUpstreamModels.length} allowlisted models)` : "disabled"}`);
   if (cfg.httpProxy) log(`upstream proxy: ${cfg.httpProxy}`);
 
   const target = listenTarget(cfg.listenAddr);

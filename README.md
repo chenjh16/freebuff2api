@@ -37,8 +37,10 @@ You can use it two ways:
   (see [Quick start](#quick-start) and
   [Hosted deployment](#hosted-deployment-freebuff)).
 - **Standalone local proxy** — run the CLI server on your own machine
-  (`bun run dev:cli`), give it your auth token, and point clients at
-  `http://localhost:23333/v1`.
+  (`bun run dev:cli`) and point clients at `http://localhost:23333/v1`.
+  The default OpenCode public models work without an account token; add
+  `AUTH_TOKENS` (or run login) for Freebuff-only models and authenticated
+  fallback.
 
 Zero runtime dependencies for the core proxy. Written in TypeScript for
 [Bun](https://bun.sh) (also runs on Node 22+ with
@@ -110,7 +112,11 @@ Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 
 ## How it works
 
-Freebuff's free tier is session-gated. For every chat request the proxy:
+For every chat request the proxy first checks the explicit OpenCode public
+model allowlist. Public models are sent to OpenCode by default without
+forwarding client credentials; set `PUBLIC_UPSTREAM_ENABLED=false` to disable
+that route. Requests that use Freebuff-only models, or transient public-provider
+failures, use the authenticated Freebuff session path:
 
 1. **Acquires a free session** — `POST /api/v1/freebuff/session` with your
    token. If the service is under load it returns `queued` (the "waiting
@@ -165,7 +171,7 @@ CLI option > `config.json` > environment variable**.
 
 | Env var             | Default                   | Description                                             |
 | ------------------- | ------------------------- | ------------------------------------------------------- |
-| `AUTH_TOKENS`       | *(optional in hosted web mode)* | Comma-separated Freebuff auth tokens; standalone CLI needs this or saved login credentials |
+| `AUTH_TOKENS`       | *(optional when public provider is enabled)* | Comma-separated Freebuff auth tokens; needed for Freebuff-only models, authenticated fallback, or when public provider is disabled |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com`| Freebuff backend base URL                              |
 | `LOGIN_BASE_URL`    | `https://freebuff.com`    | Base URL used by `freebuff2api login`                   |
 | `LISTEN_ADDR`       | `:23333`                 | Listen address (`PORT` env wins in managed workspaces) |
@@ -176,13 +182,18 @@ CLI option > `config.json` > environment variable**.
 | `HTTP_PROXY`        | *(empty)*                 | Optional upstream HTTP(S) proxy; `--http-proxy` > `config.json` > environment |
 | `MAX_BODY_SIZE`     | `16MB`                    | Maximum `/v1/chat/completions` body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32`                | Maximum concurrent chat requests                  |
+| `PUBLIC_UPSTREAM_ENABLED` | `true`              | Anonymous OpenCode-compatible provider before Freebuff; set `false` to disable |
+| `PUBLIC_UPSTREAM_MODELS` | free-tier allowlist | Models eligible for the anonymous provider; never accepts arbitrary model ids |
+| `PUBLIC_UPSTREAM_TIMEOUT` | `20s`              | Initial response timeout before falling back to Freebuff |
 
 See [`config.example.json`](config.example.json) and [`env.example`](env.example).
 
-In standalone CLI mode, `AUTH_TOKENS` is required unless you have run
-`freebuff2api login`, in which case the saved credentials are used. In hosted
-web-login mode it is optional: each visitor can sign in and receive a personal
-`sk-fb-*` key.
+With the default public provider enabled, standalone CLI mode can serve
+allowlisted OpenCode models without `AUTH_TOKENS`. Configure `AUTH_TOKENS` or
+run `freebuff2api login` for Freebuff-only models and authenticated fallback;
+if `PUBLIC_UPSTREAM_ENABLED=false`, a token is required. In hosted web-login
+mode `AUTH_TOKENS` remains optional because each visitor can sign in and receive
+a personal `sk-fb-*` key.
 
 The token is a freebuff.com account token (the same one your browser session
 uses). Keep it secret — it grants API usage on your account.
@@ -194,6 +205,8 @@ uses). Keep it secret — it grants API usage on your account.
 | GET    | `/healthz`               | Public liveness status                       |
 | GET    | `/v1/models`             | Models currently available in free mode      |
 | POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
+
+By default, the proxy first tries the fixed, allowlisted OpenCode Zen endpoint for selected free models. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable it and use the authenticated Freebuff path only. It never forwards downstream API keys, cookies, or Freebuff account tokens to that provider. A transient public-provider failure (timeout, 401, 429, or 5xx) falls back to the authenticated Freebuff path; a non-retryable 4xx is returned directly. The public route sends prompts and code to OpenCode, so review that provider's terms and privacy posture before deployment.
 
 Models are kept in sync with the official client by fetching
 `CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
@@ -315,7 +328,8 @@ OpenAI 兼容客户端（Claude Code、Cline、LobeChat、curl…）都能驱动
   专属 `sk-fb-*` API Key，再把任意 OpenAI 兼容客户端指向公网 `/v1` 端点。
   无需 VPS（见[快速开始](#快速开始)与[托管部署](#托管部署freebuff)）。
 - **独立本地代理** —— 在自己机器上运行 CLI 服务器（`bun run dev:cli`），
-  配置 auth token 后，把客户端指向 `http://localhost:23333/v1` 即可。
+  默认无需 auth token 即可使用白名单 OpenCode 公共模型；配置 token 后还可使用
+  Freebuff 专属模型和认证回退，把客户端指向 `http://localhost:23333/v1` 即可。
 
 核心代理零运行时依赖。TypeScript 编写，面向 [Bun](https://bun.sh)（也可在
 Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build:cli` 后运行）。
@@ -380,7 +394,11 @@ curl http://localhost:23333/v1/chat/completions \
 
 ## 工作原理
 
-Freebuff 的免费档按**会话（session）**发放。对每次 chat 请求，代理：
+对每次 chat 请求，代理会先检查公共模型白名单：默认将白名单中的模型发送到固定的
+OpenCode Zen 公共上游，不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭。
+公共上游失败或请求 Freebuff 专属模型时，才进入下面的认证链路。
+
+Freebuff 的免费档按**会话（session）**发放。认证链路对每次 chat 请求：
 
 1. **获取免费会话** — 用你的 token 调 `POST /api/v1/freebuff/session`。
    服务繁忙时返回 `queued`（"等待室"）；代理向客户端返回 `503 +
@@ -427,7 +445,7 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 
 | 环境变量             | 默认值                       | 说明                                        |
 | ------------------- | ---------------------------- | ------------------------------------------- |
-| `AUTH_TOKENS`       | *(托管网页登录模式可选)*     | 逗号分隔的 Freebuff auth token；独立 CLI 需要它或已保存的登录凭证 |
+| `AUTH_TOKENS`       | *(公共上游开启时可选)*       | 逗号分隔的 Freebuff auth token；使用 Freebuff 专属模型、认证回退或关闭公共上游时需要 |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com`   | Freebuff 后端地址                           |
 | `LOGIN_BASE_URL`    | `https://freebuff.com`       | `freebuff2api login` 使用的 base URL        |
 | `LISTEN_ADDR`       | `:23333`                    | 监听地址（托管环境以 `PORT` 优先）           |
@@ -438,13 +456,17 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 | `HTTP_PROXY`        | *(空)*                       | 可选的上游 HTTP(S) 代理；优先级为 `--http-proxy` > `config.json` > 环境变量 |
 | `MAX_BODY_SIZE`     | `16MB`                       | `/v1/chat/completions` 请求体上限（16,000,000 字节） |
 | `MAX_CONCURRENT_REQUESTS` | `32`                   | 最大并发 chat 请求数                         |
+| `PUBLIC_UPSTREAM_ENABLED` | `true`                 | 默认启用 OpenCode 免认证上游（优先于 Freebuff）；设为 `false` 可关闭 |
+| `PUBLIC_UPSTREAM_MODELS` | 免认证模型白名单       | 仅白名单模型允许走免认证上游，不接受任意模型名 |
+| `PUBLIC_UPSTREAM_TIMEOUT` | `20s`                 | 免认证上游首响应超时，之后回退 Freebuff |
 
 参见 [`config.example.json`](config.example.json) 与
 [`env.example`](env.example)。
 
-独立 CLI 模式下，除非已运行 `freebuff2api login`（使用保存的凭证），否则
-`AUTH_TOKENS` 必需。托管网页登录模式可以不设置它，访客登录后使用自己的
-`sk-fb-*` key。
+默认公共上游开启时，独立 CLI 可以不配置 `AUTH_TOKENS` 直接使用白名单
+OpenCode 模型；使用 Freebuff 专属模型、认证回退或设置
+`PUBLIC_UPSTREAM_ENABLED=false` 时，需要 `AUTH_TOKENS` 或已保存的登录凭证。
+托管网页登录模式可以不设置它，访客登录后使用自己的 `sk-fb-*` key。
 
 token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密——它代表你
 账号的 API 使用权。
@@ -456,6 +478,8 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 | GET  | `/healthz`               | 公开存活状态（仅 liveness）                 |
 | GET  | `/v1/models`             | 免费模式当前可用的模型                     |
 | POST | `/v1/chat/completions`   | OpenAI chat completions（支持流式）        |
+
+默认情况下，代理会优先尝试固定且受白名单限制的 OpenCode Zen 免认证端点；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路。不会向该上游转发下游 API Key、Cookie 或 Freebuff 账号 token；超时、401、408、425、429、5xx 等瞬态失败才回退到 Freebuff，普通 4xx 直接返回。公共上游会接收请求中的提示词和代码，部署前请确认其服务条款与隐私要求。
 
 模型列表与官方客户端保持同步：每 6 小时抓取 `CodebuffAI/freebuff` 的
 `free-agents.ts`；抓取失败时使用内置兜底映射，保证代理可用。

@@ -20,6 +20,10 @@ const ENV_KEYS = [
   "https_proxy",
   "MAX_BODY_SIZE",
   "MAX_CONCURRENT_REQUESTS",
+  "PUBLIC_UPSTREAM_ENABLED",
+  "PUBLIC_UPSTREAM_BASE_URL",
+  "PUBLIC_UPSTREAM_MODELS",
+  "PUBLIC_UPSTREAM_TIMEOUT",
   "FREEBUFF2API_CONFIG_DIR",
 ];
 
@@ -93,6 +97,7 @@ describe("loadConfig", () => {
   });
 
   test("throws when no token is available and requireToken is true", () => {
+    process.env.PUBLIC_UPSTREAM_ENABLED = "false";
     expect(() => loadConfig()).toThrow(/AUTH_TOKENS/);
   });
 
@@ -100,6 +105,12 @@ describe("loadConfig", () => {
     const cfg = loadConfig({ requireToken: false });
     expect(cfg.authTokens).toEqual([]);
     expect(cfg.actingUserId).toBeNull();
+  });
+
+  test("enables the public route without requiring an account token", () => {
+    const cfg = loadConfig();
+    expect(cfg.authTokens).toEqual([]);
+    expect(cfg.publicUpstreamEnabled).toBe(true);
   });
 
   test("trims trailing slashes from base URLs and applies defaults", () => {
@@ -116,6 +127,10 @@ describe("loadConfig", () => {
     expect(cfg.listenAddr).toBe(":23333");
     expect(cfg.maxBodyBytes).toBe(16_000_000);
     expect(cfg.maxConcurrentRequests).toBe(32);
+    expect(cfg.publicUpstreamEnabled).toBe(true);
+    expect(cfg.publicUpstreamBaseURL).toBe("https://opencode.ai/zen/v1");
+    expect(cfg.publicUpstreamModels).toContain("big-pickle");
+    expect(cfg.publicUpstreamTimeoutMs).toBe(20_000);
   });
 
   test("applies REQUEST_TIMEOUT / ROTATION_INTERVAL env overrides", () => {
@@ -173,6 +188,31 @@ describe("loadConfig", () => {
 
     expect(loadConfig({ configPath: path }).httpProxy).toBe("http://file.proxy:8080");
     expect(loadConfig({ configPath: path, httpProxy: "http://cli.proxy:8080" }).httpProxy).toBe("http://cli.proxy:8080");
+  });
+
+  test("enables the public upstream by default and allows explicit opt-out", () => {
+    process.env.AUTH_TOKENS = "tok";
+    expect(loadConfig().publicUpstreamEnabled).toBe(true);
+
+    process.env.PUBLIC_UPSTREAM_ENABLED = "false";
+    expect(loadConfig().publicUpstreamEnabled).toBe(false);
+  });
+
+  test("parses the public upstream configuration", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.PUBLIC_UPSTREAM_ENABLED = "true";
+    process.env.PUBLIC_UPSTREAM_MODELS = "big-pickle, north-mini-code-free, big-pickle";
+    process.env.PUBLIC_UPSTREAM_TIMEOUT = "3s";
+    const cfg = loadConfig();
+    expect(cfg.publicUpstreamEnabled).toBe(true);
+    expect(cfg.publicUpstreamModels).toEqual(["big-pickle", "north-mini-code-free"]);
+    expect(cfg.publicUpstreamTimeoutMs).toBe(3_000);
+  });
+
+  test("rejects an unallowlisted public upstream host", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.PUBLIC_UPSTREAM_BASE_URL = "https://evil.example/v1";
+    expect(() => loadConfig()).toThrow(/not in PUBLIC_UPSTREAM_ALLOWED_HOSTS/);
   });
 
   test("parses body and concurrency limits from environment", () => {

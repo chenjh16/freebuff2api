@@ -24,6 +24,7 @@
 import { createHandler } from "../../src/handler.ts";
 import { loadConfig, type Config } from "../../src/config.ts";
 import { UpstreamClient } from "../../src/upstream.ts";
+import { PublicUpstreamClient } from "../../src/public-upstream.ts";
 import { ModelRegistry } from "../../src/models.ts";
 import { TokenManager } from "../../src/session.ts";
 import { RunManager } from "../../src/runs.ts";
@@ -108,6 +109,13 @@ async function buildHandler(): Promise<(request: Request) => Promise<Response>> 
   await registry.start();
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
+  const publicUpstream = cfg.publicUpstreamEnabled
+    ? new PublicUpstreamClient({
+        baseURL: cfg.publicUpstreamBaseURL,
+        models: cfg.publicUpstreamModels,
+        timeoutMs: cfg.publicUpstreamTimeoutMs,
+      })
+    : undefined;
   log(
     `web handler ready: upstream=${cfg.upstreamBaseURL} poolTokens=${cfg.authTokens.length} ` +
       `apiKeys=${cfg.apiKeys.length > 0 ? "required" : "open"} webLogin=sk-fb-keys`,
@@ -115,6 +123,7 @@ async function buildHandler(): Promise<(request: Request) => Promise<Response>> 
   return createHandler({
     cfg,
     client,
+    publicUpstream,
     registry,
     tokens,
     runs,

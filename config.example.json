@@ -9,5 +9,19 @@
   "USER_AGENT": "ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/browser",
   "HTTP_PROXY": "",
   "MAX_BODY_SIZE": "16MB",
-  "MAX_CONCURRENT_REQUESTS": "32"
+  "MAX_CONCURRENT_REQUESTS": "32",
+  "PUBLIC_UPSTREAM_ENABLED": "true",
+  "PUBLIC_UPSTREAM_BASE_URL": "https://opencode.ai/zen/v1",
+  "PUBLIC_UPSTREAM_MODELS": [
+    "big-pickle",
+    "deepseek-v4-flash-free",
+    "mimo-v2.5-free",
+    "ling-3.0-flash-free",
+    "ling-3.0-tiny-free",
+    "nemotron-3-ultra-free",
+    "north-mini-code-free",
+    "laguna-s-2.1-free",
+    "longcat-2.0-free"
+  ],
+  "PUBLIC_UPSTREAM_TIMEOUT": "20s"
 }

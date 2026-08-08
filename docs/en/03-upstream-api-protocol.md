@@ -17,6 +17,18 @@
 - Debugging: with `DEBUG_UPSTREAM=1`, every upstream request's headers and
   body are printed (token redacted)
 
+## Public OpenCode-compatible upstream
+
+The proxy has two upstream paths. For the explicit public model allowlist, it
+tries `https://opencode.ai/zen/v1/chat/completions` first (enabled by default;
+set `PUBLIC_UPSTREAM_ENABLED=false` to disable). This endpoint is kept behind
+an HTTPS host allowlist, and the proxy sends only the OpenAI-compatible JSON
+body—never the downstream `Authorization`, `x-api-key`, cookies, or Freebuff
+account token. Timeouts and transient `401/408/425/429/5xx` responses fall back
+to the authenticated Freebuff path before response headers are committed; a
+normal `4xx` is returned directly. Because the request body is sent to
+OpenCode, review its terms and privacy requirements before deployment.
+
 ## Endpoints at a glance
 
 | Method | Path | Description |

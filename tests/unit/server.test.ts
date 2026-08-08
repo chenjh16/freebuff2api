@@ -24,6 +24,12 @@ function makeFullHarness(opts: {
   models?: string[];
   maxBodyBytes?: number;
   maxConcurrentRequests?: number;
+  publicUpstream?: {
+    models: () => string[];
+    hasModel: (model: string) => boolean;
+    chatCompletions: (body: string, signal?: AbortSignal) => Promise<Response>;
+  };
+  publicUpstreamEnabled?: boolean;
   chatHandler?: (body: string, call: number) => Response | Promise<Response>;
   acquireSession?: () => Promise<{ pool: { token: string }; instanceId: string | null }>;
   acquireUserSession?: (token: string) => Promise<{ pool: { token: string }; instanceId: string | null }>;
@@ -42,6 +48,10 @@ function makeFullHarness(opts: {
     httpProxy: null,
     maxBodyBytes: opts.maxBodyBytes ?? 16 * 1024 * 1024,
     maxConcurrentRequests: opts.maxConcurrentRequests ?? 32,
+    publicUpstreamEnabled: opts.publicUpstreamEnabled ?? Boolean(opts.publicUpstream),
+    publicUpstreamBaseURL: "https://opencode.ai/zen/v1",
+    publicUpstreamModels: ["big-pickle"],
+    publicUpstreamTimeoutMs: 2_000,
   } as Config;
 
   const bodies: string[] = [];
@@ -61,6 +71,8 @@ function makeFullHarness(opts: {
       });
     },
   } as unknown as UpstreamClient;
+
+  const publicUpstream = opts.publicUpstream as never;
 
   const registry = {
     status: () => ({ source: "fallback" as const, updatedAt: null, agentCount: 2, modelCount: 2 }),
@@ -89,6 +101,7 @@ function makeFullHarness(opts: {
   const server = new Server({
     cfg,
     client,
+    publicUpstream,
     registry,
     tokens,
     runs,
@@ -167,6 +180,72 @@ describe("Server HTTP surface", () => {
     expect(resp.status).toBe(404);
     const body = (await resp.json()) as { error: { code: string } };
     expect(body.error.code).toBe("not_found");
+  });
+
+  test("uses the anonymous public provider before Freebuff when the model is allowlisted", async () => {
+    let publicBody = "";
+    const publicHarness = makeFullHarness({
+      publicUpstreamEnabled: true,
+      publicUpstream: {
+        models: () => [MODEL],
+        hasModel: (model) => model === MODEL,
+        chatCompletions: async (body) => {
+          publicBody = body;
+          return new Response('{"id":"public","choices":[{"message":{"role":"assistant","content":"public-ok"}}]}', {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+      },
+    });
+    const started = await publicHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
+      expect(resp.status).toBe(200);
+      expect((await resp.json()).choices[0].message.content).toBe("public-ok");
+      expect(publicBody).toContain(MODEL);
+      expect(publicHarness.chatCalls()).toBe(0);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("falls back to Freebuff when the public provider returns a transient failure", async () => {
+    const publicHarness = makeFullHarness({
+      publicUpstreamEnabled: true,
+      publicUpstream: {
+        models: () => [MODEL],
+        hasModel: () => true,
+        chatCompletions: async () => new Response('{"error":"busy"}', { status: 503 }),
+      },
+    });
+    const started = await publicHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
+      expect(resp.status).toBe(200);
+      expect(publicHarness.chatCalls()).toBe(1);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("returns public client errors without consuming Freebuff capacity", async () => {
+    const publicHarness = makeFullHarness({
+      publicUpstreamEnabled: true,
+      publicUpstream: {
+        models: () => [MODEL],
+        hasModel: () => true,
+        chatCompletions: async () => new Response('{"error":"bad request"}', { status: 400 }),
+      },
+    });
+    const started = await publicHarness.start();
+    try {
+      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
+      expect(resp.status).toBe(400);
+      expect(publicHarness.chatCalls()).toBe(0);
+    } finally {
+      await started.server.close();
+    }
   });
 
   test("POST /v1/chat/completions proxies and injects the CLI marker", async () => {

@@ -9,13 +9,17 @@
  *   LISTEN_ADDR          - listen address, e.g. ":23333" (default ":23333")
  *   PORT                 - Freebuff-injected port; overrides the LISTEN_ADDR port
  *   UPSTREAM_BASE_URL    - Freebuff backend base URL (default "https://www.codebuff.com")
- *   AUTH_TOKENS          - comma-separated Freebuff auth tokens (required by default; hosted web mode may opt out)
+ *   AUTH_TOKENS          - comma-separated Freebuff auth tokens (needed for Freebuff-only models, authenticated fallback, or a disabled public route)
  *   REQUEST_TIMEOUT      - upstream request timeout, Go duration syntax, e.g. "15m"
  *   ROTATION_INTERVAL    - how long a token pool stays preferred (default "6h")
  *   API_KEYS             - optional comma-separated keys clients must send to this proxy
  *   HTTP_PROXY           - optional HTTP(S) proxy URL used for upstream calls
  *   MAX_BODY_SIZE        - maximum chat request body, e.g. "16mb" (default "16mb")
  *   MAX_CONCURRENT_REQUESTS - maximum in-flight chat requests (default 32)
+ *   PUBLIC_UPSTREAM_ENABLED - enable the anonymous OpenCode-compatible route (default true; set false to disable)
+ *   PUBLIC_UPSTREAM_BASE_URL - fixed allowlisted public upstream base URL
+ *   PUBLIC_UPSTREAM_MODELS - comma-separated anonymous model allowlist
+ *   PUBLIC_UPSTREAM_TIMEOUT - public upstream header timeout (default 20s)
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -23,6 +27,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { loadCredentials } from "./login.ts";
+import {
+  DEFAULT_PUBLIC_UPSTREAM_ALLOWED_HOSTS,
+  DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
+  DEFAULT_PUBLIC_UPSTREAM_MODELS,
+  validatePublicUpstreamURL,
+} from "./public-upstream.ts";
 
 export interface Config {
   /** Full listen address including host and port, e.g. ":8080". */
@@ -49,6 +59,14 @@ export interface Config {
   maxBodyBytes: number;
   /** Maximum number of concurrent chat requests. */
   maxConcurrentRequests: number;
+  /** Whether the anonymous public provider is enabled. */
+  publicUpstreamEnabled: boolean;
+  /** Fixed public provider base URL. */
+  publicUpstreamBaseURL: string;
+  /** Explicit model allowlist for the public provider. */
+  publicUpstreamModels: string[];
+  /** Public provider initial-response timeout. */
+  publicUpstreamTimeoutMs: number;
 }
 
 interface RawConfig {
@@ -63,6 +81,10 @@ interface RawConfig {
   HTTP_PROXY?: string;
   MAX_BODY_SIZE?: string;
   MAX_CONCURRENT_REQUESTS?: string;
+  PUBLIC_UPSTREAM_ENABLED?: string;
+  PUBLIC_UPSTREAM_BASE_URL?: string;
+  PUBLIC_UPSTREAM_MODELS?: string[];
+  PUBLIC_UPSTREAM_TIMEOUT?: string;
 }
 
 const DEFAULTS: RawConfig = {
@@ -73,6 +95,9 @@ const DEFAULTS: RawConfig = {
   REQUEST_TIMEOUT: "15m",
   MAX_BODY_SIZE: "16MB",
   MAX_CONCURRENT_REQUESTS: "32",
+  PUBLIC_UPSTREAM_ENABLED: "true",
+  PUBLIC_UPSTREAM_BASE_URL: DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
+  PUBLIC_UPSTREAM_TIMEOUT: "20s",
 };
 
 const DEFAULT_MAX_BODY_BYTES = 16_000_000;
@@ -174,6 +199,10 @@ interface ConfigOverrides {
   httpProxy?: string;
   maxBodySize?: string;
   maxConcurrentRequests?: string;
+  publicUpstreamEnabled?: boolean;
+  publicUpstreamBaseURL?: string;
+  publicUpstreamModels?: string[];
+  publicUpstreamTimeout?: string;
 }
 
 function loadRawConfig(configPath?: string): RawConfig {
@@ -197,6 +226,10 @@ function loadRawConfig(configPath?: string): RawConfig {
       if (parsed.HTTP_PROXY !== undefined) cfg.HTTP_PROXY = parsed.HTTP_PROXY;
       if (parsed.MAX_BODY_SIZE !== undefined) cfg.MAX_BODY_SIZE = parsed.MAX_BODY_SIZE;
       if (parsed.MAX_CONCURRENT_REQUESTS !== undefined) cfg.MAX_CONCURRENT_REQUESTS = parsed.MAX_CONCURRENT_REQUESTS;
+      if (parsed.PUBLIC_UPSTREAM_ENABLED !== undefined) cfg.PUBLIC_UPSTREAM_ENABLED = parsed.PUBLIC_UPSTREAM_ENABLED;
+      if (parsed.PUBLIC_UPSTREAM_BASE_URL !== undefined) cfg.PUBLIC_UPSTREAM_BASE_URL = parsed.PUBLIC_UPSTREAM_BASE_URL;
+      if (parsed.PUBLIC_UPSTREAM_MODELS !== undefined && Array.isArray(parsed.PUBLIC_UPSTREAM_MODELS)) cfg.PUBLIC_UPSTREAM_MODELS = parsed.PUBLIC_UPSTREAM_MODELS;
+      if (parsed.PUBLIC_UPSTREAM_TIMEOUT !== undefined) cfg.PUBLIC_UPSTREAM_TIMEOUT = parsed.PUBLIC_UPSTREAM_TIMEOUT;
     } catch (error) {
       console.warn(`[config] failed to parse ${path}: ${String(error)}`);
     }
@@ -219,6 +252,10 @@ function loadRawConfig(configPath?: string): RawConfig {
   }
   if (env.MAX_BODY_SIZE) cfg.MAX_BODY_SIZE = env.MAX_BODY_SIZE;
   if (env.MAX_CONCURRENT_REQUESTS) cfg.MAX_CONCURRENT_REQUESTS = env.MAX_CONCURRENT_REQUESTS;
+  if (env.PUBLIC_UPSTREAM_ENABLED) cfg.PUBLIC_UPSTREAM_ENABLED = env.PUBLIC_UPSTREAM_ENABLED;
+  if (env.PUBLIC_UPSTREAM_BASE_URL) cfg.PUBLIC_UPSTREAM_BASE_URL = env.PUBLIC_UPSTREAM_BASE_URL;
+  if (env.PUBLIC_UPSTREAM_MODELS) cfg.PUBLIC_UPSTREAM_MODELS = splitList(env.PUBLIC_UPSTREAM_MODELS);
+  if (env.PUBLIC_UPSTREAM_TIMEOUT) cfg.PUBLIC_UPSTREAM_TIMEOUT = env.PUBLIC_UPSTREAM_TIMEOUT;
 
   return cfg;
 }
@@ -244,12 +281,20 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
 
   // Token resolution: env / config.json AUTH_TOKENS first, then the saved
   // `freebuff2api login` credentials (~/.config/freebuff2api/credentials.json).
+  const publicUpstreamBaseURL = (options.publicUpstreamBaseURL ?? raw.PUBLIC_UPSTREAM_BASE_URL ?? DEFAULT_PUBLIC_UPSTREAM_BASE_URL).replace(/\/+$/, "");
+  validatePublicUpstreamURL(publicUpstreamBaseURL, [...DEFAULT_PUBLIC_UPSTREAM_ALLOWED_HOSTS]);
+  const publicUpstreamModels = dedupe(options.publicUpstreamModels ?? raw.PUBLIC_UPSTREAM_MODELS ?? [...DEFAULT_PUBLIC_UPSTREAM_MODELS]);
+  const publicUpstreamEnabled = options.publicUpstreamEnabled ?? /^(1|true|yes|on)$/i.test(raw.PUBLIC_UPSTREAM_ENABLED ?? "true");
+
   const authTokens = dedupe(options.authTokens ?? raw.AUTH_TOKENS ?? []);
   const credentials = loadCredentials();
   if (authTokens.length === 0) {
     if (credentials?.authToken) authTokens.push(credentials.authToken);
   }
-  if (authTokens.length === 0 && requireToken) {
+  // Public models can be served without a Freebuff account token. Tokens are
+  // still required when the public route is disabled because every request
+  // then depends on the authenticated Freebuff session path.
+  if (authTokens.length === 0 && requireToken && !publicUpstreamEnabled) {
     throw new Error(
       "No AUTH_TOKENS configured. Set the AUTH_TOKENS environment variable (or config.json), " +
         'or run "freebuff2api login" to sign in and store your credentials.',
@@ -291,5 +336,9 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
       1,
       Math.round(Number.parseInt(options.maxConcurrentRequests ?? raw.MAX_CONCURRENT_REQUESTS ?? "32", 10) || DEFAULT_MAX_CONCURRENT_REQUESTS),
     ),
+    publicUpstreamEnabled,
+    publicUpstreamBaseURL,
+    publicUpstreamModels,
+    publicUpstreamTimeoutMs: parseDuration(options.publicUpstreamTimeout ?? raw.PUBLIC_UPSTREAM_TIMEOUT ?? "20s", 20_000),
   };
 }

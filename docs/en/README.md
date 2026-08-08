@@ -6,6 +6,8 @@ process of freebuff2api, including:
 - The login flow of the official Freebuff CLI
   ([CodebuffAI/freebuff](https://github.com/CodebuffAI/freebuff))
 - The full upstream API protocol (sessions, agent runs, chat completions)
+- The default-enabled OpenCode-compatible public provider, model allowlist,
+  credential isolation, fallback rules, and privacy boundary
 - **The core finding**: how the free-tier CLI gate works
   (`free_mode_cli_required`)
 - The model and agent hierarchy
@@ -49,14 +51,18 @@ The helper scripts used during reverse-engineering and verification live in
 ## Verification status
 
 - ✅ `bun run typecheck` (tsc -b --noEmit) passes
-- ✅ 82 unit tests pass (`bun test tests/unit`) covering config, models, runs,
-  session admission (409/503/429 classification), and the server surface
+- ✅ 125 unit tests pass (`bun test tests/unit`) covering config, public-upstream
+  safety, models, runs, session admission (409/503/429 classification), and the
+  server surface
 - ✅ Real-account login (device-code flow)
 - ✅ Hosted deployment shape: `bun run build:web` (Next.js) builds the app
   that Freebuff hosting deploys to `open.freebuff.app` — see
   [08 - Hosted Deployment](08-hosted-deployment.md)
-- ✅ End-to-end tests: streaming and non-streaming chat both return 200 with
-  real answers
+- ✅ End-to-end tests: authenticated streaming and non-streaming chat both
+  return 200 with real answers
+- ✅ Live public-provider E2E: with the default setting and no `AUTH_TOKENS`,
+  `/v1/models` and `/v1/chat/completions` both pass (`LIVE_PUBLIC_UPSTREAM_TEST=1`;
+  opt-in only to avoid external network calls during ordinary test runs)
 - ✅ Dual-model re-verification (`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`)
   through the proxy and the official CLI (MITM-captured) — see
   [06 - E2E Test Records](06-e2e-test-records.md) stage 9

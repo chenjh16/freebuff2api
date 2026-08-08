@@ -1,9 +1,10 @@
 # 06 End-to-End Test Records
 
 > This document records the key tests and conclusions from the development and
-> reverse-engineering process, for reproduction and debugging. All tests used
-> a real account (credentials at
-> `~/.config/freebuff2api/credentials.json`).
+> reverse-engineering process, for reproduction and debugging. Authenticated
+> stages use the real account credentials at
+> `~/.config/freebuff2api/credentials.json`; public-provider stages intentionally
+> run without account credentials.
 
 ## Stage 1: Login flow ✅
 
@@ -279,6 +280,24 @@ New debugging tools: `tools/probe-session.mjs` (per-model session admission
 probe, no chat quota in `--admit-only` mode) and `tools/cli-probe.mjs`
 (PTY-driven official-CLI probe with optional MITM capture). Regression tests
 added in `tests/unit/{upstream,session,server}.test.ts`.
+
+## Stage 10: Default public OpenCode upstream ✅
+
+The public-provider path is enabled by default and is intentionally covered by
+an explicit live test because it contacts a third-party service. The test starts
+the standalone CLI with `AUTH_TOKENS` empty and omits
+`PUBLIC_UPSTREAM_ENABLED`, so it verifies the actual default rather than an
+explicit opt-in configuration.
+
+| Check | Result |
+| ---- | ---- |
+| CLI startup without `AUTH_TOKENS` | ✅ ready on `/healthz` |
+| `GET /v1/models` | ✅ HTTP 200 and includes `big-pickle` |
+| `POST /v1/chat/completions` | ✅ HTTP 200 through OpenCode Zen; response matched `NOAUTH_DEFAULT_PROXY_OK` |
+| Command | `LIVE_PUBLIC_UPSTREAM_TEST=1 bun test ./tests/e2e/public-upstream.e2e.test.ts --timeout 120000` |
+
+The test is opt-in only to keep ordinary CI/unit runs independent of external
+network availability; it does not mean the feature itself is opt-in.
 
 ## How to reproduce
 

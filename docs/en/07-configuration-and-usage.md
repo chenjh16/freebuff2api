@@ -37,7 +37,7 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 
 | Variable | Default | Description |
 | ---- | ------ | ---- |
-| `AUTH_TOKENS` | saved login credentials | Comma-separated Freebuff tokens; required by the standalone CLI, optional in hosted web-login mode |
+| `AUTH_TOKENS` | saved login credentials | Comma-separated Freebuff tokens; optional for allowlisted public models, but needed for Freebuff-only models, authenticated fallback, or a disabled public provider |
 | `UPSTREAM_BASE_URL` | `https://www.codebuff.com` | Upstream backend URL |
 | `LOGIN_BASE_URL` | `https://freebuff.com` | Base URL for the login flow |
 | `LISTEN_ADDR` | `:23333` | Listen address (affected by `PORT` in managed environments) |
@@ -48,6 +48,10 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 | `HTTP_PROXY` | empty | Upstream HTTP(S) proxy; precedence is `--http-proxy` > config.json > environment |
 | `MAX_BODY_SIZE` | `16MB` | Maximum chat request body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32` | Maximum in-flight chat requests |
+| `PUBLIC_UPSTREAM_ENABLED` | `true` | Anonymous OpenCode-compatible provider is enabled by default; set `false` to disable |
+| `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | Fixed allowlisted public upstream URL |
+| `PUBLIC_UPSTREAM_MODELS` | free-model allowlist | Model ids eligible for the public provider |
+| `PUBLIC_UPSTREAM_TIMEOUT` | `20s` | Initial response timeout before authenticated fallback |
 | `USER_AGENT` | see below | Override the chat request User-Agent |
 | `DEBUG_UPSTREAM` | off | `1` prints upstream request details (token redacted) |
 
@@ -64,6 +68,14 @@ pass the gate):
 ```
 ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/browser
 ```
+
+## Public anonymous provider
+
+The proxy tries the current OpenCode-compatible public endpoint before the authenticated Freebuff session path by default. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable it and use the authenticated Freebuff path only. The base URL is restricted to `opencode.ai` over HTTPS and model routing is restricted to `PUBLIC_UPSTREAM_MODELS`.
+
+The public client receives only the OpenAI-compatible JSON body. It does not receive the downstream `Authorization`, `x-api-key`, cookies, or any Freebuff account token. A timeout, 401, 408, 425, 429, or 5xx response is treated as transient and falls back to Freebuff before response headers are committed. A normal 4xx is returned directly. Prompts and code for allowlisted models are sent to OpenCode; review its current terms and privacy requirements before deployment.
+
+When the public route is enabled, the standalone CLI may start without `AUTH_TOKENS` and can serve allowlisted public models. `AUTH_TOKENS` (or saved login credentials) is still needed for Freebuff-only models and fallback capacity. If the public provider fails without a configured token, the proxy returns a clear retryable error rather than crashing.
 
 ## Common commands
 
@@ -92,7 +104,7 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 ## Deployment notes
 
-- `AUTH_TOKENS` is required for the standalone CLI unless a saved `freebuff2api login` credential is available. It is optional for the hosted Next.js app because each visitor can use web login and a personal `sk-fb-*` key.
+- With the default public provider enabled, the standalone CLI can serve allowlisted OpenCode models without `AUTH_TOKENS`; configure `AUTH_TOKENS` or saved `freebuff2api login` credentials for Freebuff-only models and authenticated fallback. If `PUBLIC_UPSTREAM_ENABLED=false`, the standalone CLI requires a token. `AUTH_TOKENS` remains optional for the hosted Next.js app because each visitor can use web login and a personal `sk-fb-*` key.
 - Hosted `/v1` fails closed when `API_KEYS` is unset; provision an explicit high-entropy value before exposing the endpoint.
 - Build artifact: `bun run build:cli` → `dist/index.js` (pointed to by
   `bin.freebuff2api` in `package.json`)

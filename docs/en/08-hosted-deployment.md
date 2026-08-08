@@ -57,10 +57,18 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | `ROTATION_INTERVAL` | no | `6h` | Agent-run rotation interval. |
 | `MAX_BODY_SIZE` | no | `16MB` | Max chat request body. |
 | `MAX_CONCURRENT_REQUESTS` | no | `32` | Max concurrent chat requests. |
+| `PUBLIC_UPSTREAM_ENABLED` | no | `true` | Try the allowlisted OpenCode public provider first; set `false` to disable. |
+| `PUBLIC_UPSTREAM_BASE_URL` | no | `https://opencode.ai/zen/v1` | Fixed HTTPS public provider URL (host restricted). |
+| `PUBLIC_UPSTREAM_MODELS` | no | free-model allowlist | Models eligible for the public provider. |
+| `PUBLIC_UPSTREAM_TIMEOUT` | no | `20s` | Initial response timeout before authenticated fallback. |
 
 These are the same variables documented in
 [07 – Configuration & Usage](07-configuration-and-usage.md); the hosted app
-reads them from the deployment environment.
+reads them from the deployment environment. The public OpenCode-compatible
+provider is enabled by default for its explicit free-model allowlist. Set
+`PUBLIC_UPSTREAM_ENABLED=false` when prompts/code must stay on the authenticated
+Freebuff path. The public provider never receives downstream credentials, but
+it does receive the request body for routed models.
 
 ## Web login (per-user API keys)
 
@@ -152,8 +160,10 @@ curl https://open.freebuff.app/v1/chat/completions \
 
 - **Health probes:** `/healthz` remains public and liveness-only; it does not
   expose account ids, token fragments, queue state, or model registry details.
-  In hosted mode, web-login operation can work without `AUTH_TOKENS`; a shared token pool or standalone
-  CLI still needs `AUTH_TOKENS` (or saved CLI credentials). If the runtime
+  In hosted mode, web-login operation can work without `AUTH_TOKENS`; the
+  default public provider can also serve its allowlisted models without it. A
+  shared token pool or Freebuff-only model still needs `AUTH_TOKENS` (or saved
+  CLI credentials). If the runtime
   cannot build a usable handler, `/healthz` answers `200 {ok:false,
   configured:false}` and other proxy endpoints return a clear 503.
 - **CORS:** open on `/v1/*` (preflight answered with `204`), so browser-based
