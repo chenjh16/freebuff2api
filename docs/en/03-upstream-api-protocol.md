@@ -17,17 +17,25 @@
 - Debugging: with `DEBUG_UPSTREAM=1`, every upstream request's headers and
   body are printed (token redacted)
 
-## Public OpenCode-compatible upstream
+## Fixed public/no-auth upstreams
 
-The proxy has two upstream paths. For the explicit public model allowlist, it
-tries `https://opencode.ai/zen/v1/chat/completions` first (enabled by default;
-set `PUBLIC_UPSTREAM_ENABLED=false` to disable). This endpoint is kept behind
-an HTTPS host allowlist, and the proxy sends only the OpenAI-compatible JSON
-body—never the downstream `Authorization`, `x-api-key`, cookies, or Freebuff
-account token. Timeouts and transient `401/408/425/429/5xx` responses fall back
-to the authenticated Freebuff path before response headers are committed; a
-normal `4xx` is returned directly. Because the request body is sent to
-OpenCode, review its terms and privacy requirements before deployment.
+The proxy has an authenticated Freebuff path and a default-enabled aggregate
+of three fixed public routes: OpenCode Zen, keyless Pollinations, and Felo's
+reverse-engineered web protocol. OpenCode model ids remain bare; Pollinations
+and Felo require strict `pollinations/<model>` and `felo/<model>` namespaces.
+`PUBLIC_UPSTREAM_BASE_URL` may override only an HTTPS `opencode.ai` URL;
+Pollinations (`https://gen.pollinations.ai/v1`) and Felo (`https://felo.ai`)
+remain fixed. `PUBLIC_UPSTREAM_PROVIDERS` and `PUBLIC_UPSTREAM_MODELS` narrow the
+allowlist, while `PUBLIC_UPSTREAM_ENABLED=false` disables every public route.
+
+Each adapter constructs its own outbound headers and sends only the translated
+request body—never downstream `Authorization`, `x-api-key`, cookies, or a
+Freebuff account token. Timeouts and transient `401/408/425/429/5xx` responses
+try another matching public route and then fall back to authenticated Freebuff;
+a normal `4xx` is returned directly. Pollinations' anonymous catalog excludes
+premium/optional-key models. Felo has no official API and its browser-facing
+protocol may change without notice. Because routed prompts and code leave this
+service, review all selected providers' terms and privacy requirements.
 
 ## Endpoints at a glance
 

@@ -10,7 +10,7 @@
 
 - 官方 Freebuff CLI（[CodebuffAI/freebuff](https://github.com/CodebuffAI/freebuff)）的登录流程
 - 上游 API 的完整协议（会话、Agent 运行、Chat Completions）
-- 默认开启的 OpenCode 兼容公共上游、模型白名单、凭证隔离、回退规则与隐私边界
+- 默认开启的 OpenCode、Pollinations、Felo 固定公共上游聚合、模型命名空间、凭证隔离、回退规则与隐私边界
 - **核心发现**：免费模式 CLI 网关的检查机制（`free_mode_cli_required`）
 - 模型与 Agent 体系
 - 端到端测试记录
@@ -53,9 +53,10 @@
   部署到 `open.freebuff.app` 的应用——见
   [08-托管部署](08-托管部署.md)
 - ✅ 端到端测试：认证链路的流式 + 非流式 chat 均返回 200 与真实回复
-- ✅ 公共上游实时 E2E：默认配置且无 `AUTH_TOKENS` 时，`/v1/models` 与
+- ✅ OpenCode 公共上游实时 E2E：默认配置且无 `AUTH_TOKENS` 时，`/v1/models` 与
   `/v1/chat/completions` 均通过（`LIVE_PUBLIC_UPSTREAM_TEST=1`；为避免普通测试
-  依赖外部网络，该测试需要显式开启）
+  依赖外部网络，该测试需要显式开启）。Pollinations/Felo 适配器另有确定性的
+  协议与命名空间单元测试覆盖。
 - ✅ 双模型复测（`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`）：
   经代理与官方 CLI（MITM 抓包）全链路通过——见
   [06-端到端测试记录](06-端到端测试记录.md) 阶段 9

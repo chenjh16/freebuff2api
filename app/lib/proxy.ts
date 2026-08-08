@@ -24,7 +24,7 @@
 import { createHandler } from "../../src/handler.ts";
 import { loadConfig, type Config } from "../../src/config.ts";
 import { UpstreamClient } from "../../src/upstream.ts";
-import { PublicUpstreamClient } from "../../src/public-upstream.ts";
+import { createPublicUpstreamRouter } from "../../src/public-upstream.ts";
 import { ModelRegistry } from "../../src/models.ts";
 import { TokenManager } from "../../src/session.ts";
 import { RunManager } from "../../src/runs.ts";
@@ -110,9 +110,10 @@ async function buildHandler(): Promise<(request: Request) => Promise<Response>> 
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
   const publicUpstream = cfg.publicUpstreamEnabled
-    ? new PublicUpstreamClient({
-        baseURL: cfg.publicUpstreamBaseURL,
+    ? createPublicUpstreamRouter({
+        providers: cfg.publicUpstreamProviders,
         models: cfg.publicUpstreamModels,
+        baseURL: cfg.publicUpstreamBaseURL,
         timeoutMs: cfg.publicUpstreamTimeoutMs,
       })
     : undefined;

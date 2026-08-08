@@ -49,6 +49,7 @@ function makeFullHarness(opts: {
     maxBodyBytes: opts.maxBodyBytes ?? 16 * 1024 * 1024,
     maxConcurrentRequests: opts.maxConcurrentRequests ?? 32,
     publicUpstreamEnabled: opts.publicUpstreamEnabled ?? Boolean(opts.publicUpstream),
+    publicUpstreamProviders: ["opencode", "pollinations", "felo"],
     publicUpstreamBaseURL: "https://opencode.ai/zen/v1",
     publicUpstreamModels: ["big-pickle"],
     publicUpstreamTimeoutMs: 2_000,
@@ -224,6 +225,24 @@ describe("Server HTTP surface", () => {
       const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
       expect(resp.status).toBe(200);
       expect(publicHarness.chatCalls()).toBe(1);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("returns a final public failure for a model without Freebuff fallback", async () => {
+    const publicUpstream = {
+      models: () => ["pollinations/openai"],
+      hasModel: (model: string) => model === "pollinations/openai",
+      chatCompletions: async () => new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 }),
+    };
+    const harness = makeFullHarness({ publicUpstream, publicUpstreamEnabled: true });
+    const started = await harness.start();
+    try {
+      const response = await chatPost(started.base, { model: "pollinations/openai", messages: [{ role: "user", content: "hi" }] });
+      expect(response.status).toBe(429);
+      expect((await response.json() as { error: { message: string } }).error.message).toContain("rate limited");
+      expect(harness.chatCalls()).toBe(0);
     } finally {
       await started.server.close();
     }

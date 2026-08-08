@@ -14,15 +14,22 @@
   - chat 请求：`ai-sdk/openai-compatible/<ver>/codebuff ai-sdk/provider-utils/<ver> runtime/browser`
 - 调试：`DEBUG_UPSTREAM=1` 时打印每个上游请求的头与 body（token 脱敏）
 
-## OpenCode 公共兼容上游
+## 固定公共/免认证上游
 
-代理有两条上游链路。对白名单中的公共模型，默认先调用
-`https://opencode.ai/zen/v1/chat/completions`；设置
-`PUBLIC_UPSTREAM_ENABLED=false` 可关闭。该端点受 HTTPS 主机白名单保护，
-代理只发送 OpenAI 兼容 JSON body，不会发送下游 `Authorization`、`x-api-key`、
-Cookie 或 Freebuff 账号 token。超时以及瞬态 `401/408/425/429/5xx` 会在响应头
-提交前回退到 Freebuff 认证链路；普通 `4xx` 直接返回。由于请求 body 会发送给
-OpenCode，部署前请确认其服务条款与隐私要求。
+代理同时提供认证 Freebuff 链路与默认开启的三个固定公共链路：OpenCode Zen、免
+key 的 Pollinations，以及 Felo 逆向网页协议。OpenCode 保留裸模型 ID，Pollinations
+与 Felo 必须使用严格的 `pollinations/<model>` 与 `felo/<model>` 命名空间。
+`PUBLIC_UPSTREAM_BASE_URL` 只允许覆盖 HTTPS 的 `opencode.ai`；Pollinations
+（`https://gen.pollinations.ai/v1`）与 Felo（`https://felo.ai`）地址固定。
+`PUBLIC_UPSTREAM_PROVIDERS` 与 `PUBLIC_UPSTREAM_MODELS` 可缩小白名单，
+`PUBLIC_UPSTREAM_ENABLED=false` 可关闭全部公共链路。
+
+每个适配器自行构造 headers，只发送转换后的请求 body，不会发送下游
+`Authorization`、`x-api-key`、Cookie 或 Freebuff 账号 token。超时以及瞬态
+`401/408/425/429/5xx` 会先尝试其他匹配的公共 provider，再回退 Freebuff 认证链路；
+普通 `4xx` 直接返回。Pollinations 的匿名白名单排除了 premium/可选 key 模型。
+Felo 没有官方 API，面向网页的协议可能随时变化。由于提示词和代码会发送给选中的
+公共提供商，部署前请确认各服务条款与隐私要求。
 
 ## 端点一览
 

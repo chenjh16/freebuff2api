@@ -112,11 +112,13 @@ Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 
 ## How it works
 
-For every chat request the proxy first checks the explicit OpenCode public
-model allowlist. Public models are sent to OpenCode by default without
-forwarding client credentials; set `PUBLIC_UPSTREAM_ENABLED=false` to disable
-that route. Requests that use Freebuff-only models, or transient public-provider
-failures, use the authenticated Freebuff session path:
+For every chat request the proxy first checks the aggregated public model
+allowlist. OpenCode models keep their bare ids; Pollinations and Felo models
+use strict `pollinations/<model>` and `felo/<model>` namespaces. Public models
+are sent to the selected fixed provider without forwarding client credentials;
+set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes. Requests that
+use Freebuff-only models, or transient public-provider failures, use the
+authenticated Freebuff session path:
 
 1. **Acquires a free session** — `POST /api/v1/freebuff/session` with your
    token. If the service is under load it returns `queued` (the "waiting
@@ -182,9 +184,11 @@ CLI option > `config.json` > environment variable**.
 | `HTTP_PROXY`        | *(empty)*                 | Optional upstream HTTP(S) proxy; `--http-proxy` > `config.json` > environment |
 | `MAX_BODY_SIZE`     | `16MB`                    | Maximum `/v1/chat/completions` body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32`                | Maximum concurrent chat requests                  |
-| `PUBLIC_UPSTREAM_ENABLED` | `true`              | Anonymous OpenCode-compatible provider before Freebuff; set `false` to disable |
-| `PUBLIC_UPSTREAM_MODELS` | free-tier allowlist | Models eligible for the anonymous provider; never accepts arbitrary model ids |
-| `PUBLIC_UPSTREAM_TIMEOUT` | `20s`              | Initial response timeout before falling back to Freebuff |
+| `PUBLIC_UPSTREAM_ENABLED` | `true`              | Fixed anonymous providers before Freebuff; set `false` to disable all public routes |
+| `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | Enabled fixed providers; arbitrary providers/URLs are rejected |
+| `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS base URL override; Pollinations/Felo endpoints remain fixed |
+| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | OpenCode bare ids plus strict `provider/model` ids; never arbitrary model ids |
+| `PUBLIC_UPSTREAM_TIMEOUT` | `20s`              | Initial response timeout before trying another public provider or Freebuff |
 
 See [`config.example.json`](config.example.json) and [`env.example`](env.example).
 
@@ -206,7 +210,7 @@ uses). Keep it secret — it grants API usage on your account.
 | GET    | `/v1/models`             | Models currently available in free mode      |
 | POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
 
-By default, the proxy first tries the fixed, allowlisted OpenCode Zen endpoint for selected free models. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable it and use the authenticated Freebuff path only. It never forwards downstream API keys, cookies, or Freebuff account tokens to that provider. A transient public-provider failure (timeout, 401, 429, or 5xx) falls back to the authenticated Freebuff path; a non-retryable 4xx is returned directly. The public route sends prompts and code to OpenCode, so review that provider's terms and privacy posture before deployment.
+By default, the proxy aggregates three explicitly reviewed public routes: OpenCode Zen, keyless Pollinations, and Felo's reverse-engineered web protocol. OpenCode uses bare model ids; Pollinations and Felo require `provider/model` namespaces to prevent collisions. Set `PUBLIC_UPSTREAM_ENABLED=false` to use the authenticated Freebuff path only, or narrow `PUBLIC_UPSTREAM_PROVIDERS` / `PUBLIC_UPSTREAM_MODELS`. `PUBLIC_UPSTREAM_BASE_URL` can override only the allowlisted OpenCode host; Pollinations and Felo always use their fixed HTTPS endpoints. No downstream API keys, cookies, or Freebuff account tokens are forwarded. Timeout, 401, 408, 425, 429, and 5xx responses try another matching public route and then authenticated Freebuff; a normal 4xx is returned directly. The public routes receive prompts and code, and Felo has no official API, so review each provider's terms and privacy posture before deployment.
 
 Models are kept in sync with the official client by fetching
 `CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
@@ -394,9 +398,7 @@ curl http://localhost:23333/v1/chat/completions \
 
 ## 工作原理
 
-对每次 chat 请求，代理会先检查公共模型白名单：默认将白名单中的模型发送到固定的
-OpenCode Zen 公共上游，不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭。
-公共上游失败或请求 Freebuff 专属模型时，才进入下面的认证链路。
+对每次 chat 请求，代理会先检查聚合公共模型白名单：OpenCode 保留裸模型 ID，Pollinations/Felo 必须使用严格的 `pollinations/<model>` 与 `felo/<model>` 命名空间，避免与 Freebuff 或其他 provider 冲突。默认启用固定 HTTPS 公共上游集合（OpenCode Zen、免 key 的 Pollinations、Felo 逆向网页协议适配），不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭全部公共链路。公共提供商按匹配模型尝试并在瞬态失败时回退认证链路。
 
 Freebuff 的免费档按**会话（session）**发放。认证链路对每次 chat 请求：
 
@@ -456,15 +458,15 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 | `HTTP_PROXY`        | *(空)*                       | 可选的上游 HTTP(S) 代理；优先级为 `--http-proxy` > `config.json` > 环境变量 |
 | `MAX_BODY_SIZE`     | `16MB`                       | `/v1/chat/completions` 请求体上限（16,000,000 字节） |
 | `MAX_CONCURRENT_REQUESTS` | `32`                   | 最大并发 chat 请求数                         |
-| `PUBLIC_UPSTREAM_ENABLED` | `true`                 | 默认启用 OpenCode 免认证上游（优先于 Freebuff）；设为 `false` 可关闭 |
-| `PUBLIC_UPSTREAM_MODELS` | 免认证模型白名单       | 仅白名单模型允许走免认证上游，不接受任意模型名 |
+| `PUBLIC_UPSTREAM_ENABLED` | `true`                 | 默认启用固定公共上游（优先于 Freebuff）；设为 `false` 可关闭 |
+| `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | 允许的固定公共提供商；不接受任意 URL |
+| `PUBLIC_UPSTREAM_MODELS` | 聚合免认证模型白名单       | OpenCode 使用原始 ID，Pollinations/Felo 使用 `provider/model` 命名空间 |
 | `PUBLIC_UPSTREAM_TIMEOUT` | `20s`                 | 免认证上游首响应超时，之后回退 Freebuff |
 
 参见 [`config.example.json`](config.example.json) 与
 [`env.example`](env.example)。
 
-默认公共上游开启时，独立 CLI 可以不配置 `AUTH_TOKENS` 直接使用白名单
-OpenCode 模型；使用 Freebuff 专属模型、认证回退或设置
+默认公共上游开启时，独立 CLI 可以不配置 `AUTH_TOKENS` 直接使用白名单公共模型（例如 `big-pickle`、`pollinations/openai`、`felo/felo-chat`）；使用 Freebuff 专属模型、认证回退或设置
 `PUBLIC_UPSTREAM_ENABLED=false` 时，需要 `AUTH_TOKENS` 或已保存的登录凭证。
 托管网页登录模式可以不设置它，访客登录后使用自己的 `sk-fb-*` key。
 
@@ -479,7 +481,7 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 | GET  | `/v1/models`             | 免费模式当前可用的模型                     |
 | POST | `/v1/chat/completions`   | OpenAI chat completions（支持流式）        |
 
-默认情况下，代理会优先尝试固定且受白名单限制的 OpenCode Zen 免认证端点；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路。不会向该上游转发下游 API Key、Cookie 或 Freebuff 账号 token；超时、401、408、425、429、5xx 等瞬态失败才回退到 Freebuff，普通 4xx 直接返回。公共上游会接收请求中的提示词和代码，部署前请确认其服务条款与隐私要求。
+默认情况下，代理会优先尝试固定且受白名单限制的公共上游集合：OpenCode 使用裸模型 ID，Pollinations/Felo 使用严格的 `pollinations/<model>` 与 `felo/<model>` 命名空间。设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路；也可以用 `PUBLIC_UPSTREAM_PROVIDERS` 和 `PUBLIC_UPSTREAM_MODELS` 缩小范围。不会向公共上游转发下游 API Key、Cookie 或 Freebuff 账号 token；公共提供商按匹配模型尝试，超时、401、408、425、429、5xx 等瞬态失败才继续尝试其他公共 provider 或回退到 Freebuff，普通 4xx 直接返回。Pollinations 白名单只包含 OmniRoute 验证为无 key 可调用的模型，不包含 premium/可选 key 模型；Felo 是无官方 API 的逆向网页协议，可能随时变化。所有公共上游都会接收请求中的提示词和代码，部署前请确认服务条款与隐私要求。
 
 模型列表与官方客户端保持同步：每 6 小时抓取 `CodebuffAI/freebuff` 的
 `free-agents.ts`；抓取失败时使用内置兜底映射，保证代理可用。

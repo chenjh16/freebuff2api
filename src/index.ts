@@ -10,7 +10,7 @@ import { RunManager } from "./runs.ts";
 import { Server } from "./server.ts";
 import { TokenManager } from "./session.ts";
 import { UpstreamClient } from "./upstream.ts";
-import { PublicUpstreamClient } from "./public-upstream.ts";
+import { createPublicUpstreamRouter } from "./public-upstream.ts";
 import { LoginError, runLoginCommand } from "./login.ts";
 
 export interface CLIOptions extends LoadConfigOptions {
@@ -47,8 +47,9 @@ Environment/configuration:
   HTTP_PROXY                 proxy precedence: CLI > config.json > environment
   MAX_BODY_SIZE              default 16MB
   MAX_CONCURRENT_REQUESTS    default 32
-  PUBLIC_UPSTREAM_ENABLED     default true; set false to disable OpenCode public models
-  PUBLIC_UPSTREAM_MODELS      comma-separated allowlist for public models
+  PUBLIC_UPSTREAM_ENABLED     default true; set false to disable public providers
+  PUBLIC_UPSTREAM_PROVIDERS    comma-separated fixed providers: opencode,pollinations,felo
+  PUBLIC_UPSTREAM_MODELS      comma-separated aggregated public model allowlist
   PUBLIC_UPSTREAM_TIMEOUT     default 20s
 
 Examples:
@@ -166,9 +167,10 @@ async function main(): Promise<void> {
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
   const publicUpstream = cfg.publicUpstreamEnabled
-    ? new PublicUpstreamClient({
-        baseURL: cfg.publicUpstreamBaseURL,
+    ? createPublicUpstreamRouter({
+        providers: cfg.publicUpstreamProviders,
         models: cfg.publicUpstreamModels,
+        baseURL: cfg.publicUpstreamBaseURL,
         timeoutMs: cfg.publicUpstreamTimeoutMs,
       })
     : undefined;
@@ -177,7 +179,7 @@ async function main(): Promise<void> {
   log(`upstream: ${cfg.upstreamBaseURL}`);
   log(`tokens: ${cfg.authTokens.length} configured, api keys: ${cfg.apiKeys.length > 0 ? "required" : "open"}`);
   log(`request body limit: ${cfg.maxBodyBytes} bytes; concurrency limit: ${cfg.maxConcurrentRequests}`);
-  log(`public upstream: ${cfg.publicUpstreamEnabled ? `${cfg.publicUpstreamBaseURL} (${cfg.publicUpstreamModels.length} allowlisted models)` : "disabled"}`);
+  log(`public upstream: ${cfg.publicUpstreamEnabled ? `${cfg.publicUpstreamProviders.join(",")} (${cfg.publicUpstreamModels.length} allowlisted models)` : "disabled"}`);
   if (cfg.httpProxy) log(`upstream proxy: ${cfg.httpProxy}`);
 
   const target = listenTarget(cfg.listenAddr);

@@ -57,18 +57,21 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | `ROTATION_INTERVAL` | no | `6h` | Agent-run rotation interval. |
 | `MAX_BODY_SIZE` | no | `16MB` | Max chat request body. |
 | `MAX_CONCURRENT_REQUESTS` | no | `32` | Max concurrent chat requests. |
-| `PUBLIC_UPSTREAM_ENABLED` | no | `true` | Try the allowlisted OpenCode public provider first; set `false` to disable. |
-| `PUBLIC_UPSTREAM_BASE_URL` | no | `https://opencode.ai/zen/v1` | Fixed HTTPS public provider URL (host restricted). |
-| `PUBLIC_UPSTREAM_MODELS` | no | free-model allowlist | Models eligible for the public provider. |
-| `PUBLIC_UPSTREAM_TIMEOUT` | no | `20s` | Initial response timeout before authenticated fallback. |
+| `PUBLIC_UPSTREAM_ENABLED` | no | `true` | Try fixed public providers first; set `false` to disable all public routes. |
+| `PUBLIC_UPSTREAM_PROVIDERS` | no | `opencode,pollinations,felo` | Fixed provider ids to enable; arbitrary ids are ignored. |
+| `PUBLIC_UPSTREAM_BASE_URL` | no | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS override; Pollinations/Felo endpoints remain fixed. |
+| `PUBLIC_UPSTREAM_MODELS` | no | aggregated allowlist | OpenCode bare ids plus strict `provider/model` ids. |
+| `PUBLIC_UPSTREAM_TIMEOUT` | no | `20s` | Initial response timeout before another public route or authenticated fallback. |
 
 These are the same variables documented in
 [07 – Configuration & Usage](07-configuration-and-usage.md); the hosted app
-reads them from the deployment environment. The public OpenCode-compatible
-provider is enabled by default for its explicit free-model allowlist. Set
-`PUBLIC_UPSTREAM_ENABLED=false` when prompts/code must stay on the authenticated
-Freebuff path. The public provider never receives downstream credentials, but
-it does receive the request body for routed models.
+reads them from the deployment environment. The fixed public provider set (OpenCode Zen, keyless Pollinations, and Felo's
+reverse-engineered web protocol) is enabled by default for its explicit
+allowlist. OpenCode model ids are bare; Pollinations and Felo require strict
+`provider/model` namespaces. Set `PUBLIC_UPSTREAM_ENABLED=false` when
+prompts/code must stay on the authenticated Freebuff path. Public providers
+never receive downstream credentials, but they do receive the request body for
+routed models. Felo has no official API and may change without notice.
 
 ## Web login (per-user API keys)
 

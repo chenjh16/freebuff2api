@@ -18,7 +18,7 @@ import type { ModelRegistry } from "./models.ts";
 import type { RunManager } from "./runs.ts";
 import { TOKEN_COOLDOWN_MS, WaitingRoomError, tokenLabel, type TokenManager } from "./session.ts";
 import { UpstreamError, type UpstreamClient } from "./upstream.ts";
-import { isPublicUpstreamFallbackStatus, type PublicUpstreamClient } from "./public-upstream.ts";
+import { isPublicUpstreamFallbackStatus, type PublicUpstreamRouterLike } from "./public-upstream.ts";
 
 export const DEFAULT_MAX_BODY_BYTES = 16_000_000;
 
@@ -48,7 +48,7 @@ export interface HandlerDeps {
   cfg: Config;
   client: UpstreamClient;
   /** Optional anonymous/public provider, used before the authenticated path. */
-  publicUpstream?: PublicUpstreamClient;
+  publicUpstream?: PublicUpstreamRouterLike;
   registry: ModelRegistry;
   tokens: TokenManager;
   runs: RunManager;
@@ -193,6 +193,7 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
   }
 
   const started = Date.now();
+  let publicFallbackResponse: Response | null = null;
 
   // Public OpenCode-compatible models are attempted first. The public client
   // receives only the JSON body, never the inbound Authorization/cookie or a
@@ -209,16 +210,21 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
       if (!isPublicUpstreamFallbackStatus(publicResponse.status)) {
         return upstreamError(publicResponse.status, publicResponse.headers.get("Retry-After"), publicBody);
       }
+      // Preserve the final public-provider diagnostic if this model has no
+      // authenticated Freebuff mapping. Otherwise it would be mislabeled as
+      // `model_not_found` below.
+      publicFallbackResponse = upstreamError(publicResponse.status, publicResponse.headers.get("Retry-After"), publicBody);
       deps.log(`[public-upstream] status ${publicResponse.status}; falling back to Freebuff`);
     } catch (error) {
       if (signal.aborted) return openAIError(499, "client closed request", "server_error", "");
+      publicFallbackResponse = openAIError(503, "public upstream unavailable", "server_error", "");
       deps.log(`[public-upstream] unavailable; falling back to Freebuff: ${String(error)}`);
     }
   }
 
   const agentId = deps.registry.agentForModel(requestedModel);
   if (!agentId) {
-    return openAIError(400, `unsupported model "${requestedModel}"`, "invalid_request_error", "model_not_found");
+    return publicFallbackResponse ?? openAIError(400, `unsupported model "${requestedModel}"`, "invalid_request_error", "model_not_found");
   }
   // A web-login key resolves to the account token that should serve this
   // request; everything below uses lease.poolToken, so the user's token is

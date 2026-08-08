@@ -25,7 +25,7 @@ active session at a time. For every chat request the proxy:
 2. **Starts an agent run** — `POST /api/v1/agent-runs` (`action: START`),
    picking the agent that owns the requested model; runs are reused, rotated
    on an interval, and finished gracefully on shutdown
-3. **Prefers the public route** — for an allowlisted OpenCode model, the proxy sends the original OpenAI body to the fixed HTTPS public provider without forwarding downstream credentials. This route is enabled by default and can be disabled with `PUBLIC_UPSTREAM_ENABLED=false`.
+3. **Prefers fixed public routes** — for an allowlisted OpenCode, Pollinations, or Felo model, the proxy sends the translated body to the matching fixed HTTPS provider without forwarding downstream credentials. OpenCode ids are bare; Pollinations/Felo ids are strictly namespaced. The aggregate is enabled by default and can be disabled with `PUBLIC_UPSTREAM_ENABLED=false`.
 4. **Forwards authenticated requests** — `POST /api/v1/chat/completions`, injecting
    `codebuff_metadata` (`run_id`, `client_id`, `cost_mode: "free"`,
    `freebuff_instance_id`, …) plus the **CLI-identity system marker**
@@ -42,7 +42,7 @@ src/
   config.ts     config loading (env > config.json > login credentials > defaults)
   login.ts      device-code login flow (generate link, poll status, save credentials)
   upstream.ts   authenticated Freebuff HTTP client (session/run/chat endpoints + debug logging)
-  public-upstream.ts  fixed-host OpenCode public provider client and fallback rules
+  public-upstream.ts  fixed-host public provider adapters, model namespaces, and fallback rules
   session.ts    session pool management (SessionPool / TokenManager / token cooldown)
   runs.ts       run management (start, reuse, rotation, finish)
   models.ts     model registry (syncs the official Agent→model mapping)
@@ -59,7 +59,7 @@ tools/           debugging & analysis scripts (see tools/README.md)
 | `login.ts` | `freebuff2api login` command; credentials saved to `~/.config/freebuff2api/credentials.json` |
 | `config.ts` | Parses env / config.json / login credentials into a unified `Config` |
 | `upstream.ts` | Authenticated Freebuff session/run/chat calls; `DEBUG_UPSTREAM=1` prints plaintext requests |
-| `public-upstream.ts` | Fixed-host OpenCode public provider, model allowlist, credential isolation, timeout and fallback classification |
+| `public-upstream.ts` | Fixed-host OpenCode/Pollinations/Felo adapters, model allowlist, credential isolation, timeout and fallback classification |
 | `session.ts` | One `SessionPool` per token; `TokenManager` handles rotation and cooldown |
 | `runs.ts` | `RunManager` caches runId per (token, agent), rotates when expired |
 | `models.ts` | Fetches the official `free-agents.ts` from GitHub and parses the Agent→model mapping (6h refresh) |

@@ -21,6 +21,7 @@ const ENV_KEYS = [
   "MAX_BODY_SIZE",
   "MAX_CONCURRENT_REQUESTS",
   "PUBLIC_UPSTREAM_ENABLED",
+  "PUBLIC_UPSTREAM_PROVIDERS",
   "PUBLIC_UPSTREAM_BASE_URL",
   "PUBLIC_UPSTREAM_MODELS",
   "PUBLIC_UPSTREAM_TIMEOUT",
@@ -129,7 +130,10 @@ describe("loadConfig", () => {
     expect(cfg.maxConcurrentRequests).toBe(32);
     expect(cfg.publicUpstreamEnabled).toBe(true);
     expect(cfg.publicUpstreamBaseURL).toBe("https://opencode.ai/zen/v1");
+    expect(cfg.publicUpstreamProviders).toEqual(["opencode", "pollinations", "felo"]);
     expect(cfg.publicUpstreamModels).toContain("big-pickle");
+    expect(cfg.publicUpstreamModels).toContain("pollinations/openai");
+    expect(cfg.publicUpstreamModels).toContain("felo/felo-chat");
     expect(cfg.publicUpstreamTimeoutMs).toBe(20_000);
   });
 
@@ -201,11 +205,13 @@ describe("loadConfig", () => {
   test("parses the public upstream configuration", () => {
     process.env.AUTH_TOKENS = "tok";
     process.env.PUBLIC_UPSTREAM_ENABLED = "true";
-    process.env.PUBLIC_UPSTREAM_MODELS = "big-pickle, north-mini-code-free, big-pickle";
+    process.env.PUBLIC_UPSTREAM_PROVIDERS = "opencode,pollinations";
+    process.env.PUBLIC_UPSTREAM_MODELS = "big-pickle, pollinations/openai, big-pickle";
     process.env.PUBLIC_UPSTREAM_TIMEOUT = "3s";
     const cfg = loadConfig();
     expect(cfg.publicUpstreamEnabled).toBe(true);
-    expect(cfg.publicUpstreamModels).toEqual(["big-pickle", "north-mini-code-free"]);
+    expect(cfg.publicUpstreamProviders).toEqual(["opencode", "pollinations"]);
+    expect(cfg.publicUpstreamModels).toEqual(["big-pickle", "pollinations/openai"]);
     expect(cfg.publicUpstreamTimeoutMs).toBe(3_000);
   });
 

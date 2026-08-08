@@ -48,10 +48,11 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 | `HTTP_PROXY` | empty | Upstream HTTP(S) proxy; precedence is `--http-proxy` > config.json > environment |
 | `MAX_BODY_SIZE` | `16MB` | Maximum chat request body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32` | Maximum in-flight chat requests |
-| `PUBLIC_UPSTREAM_ENABLED` | `true` | Anonymous OpenCode-compatible provider is enabled by default; set `false` to disable |
-| `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | Fixed allowlisted public upstream URL |
-| `PUBLIC_UPSTREAM_MODELS` | free-model allowlist | Model ids eligible for the public provider |
-| `PUBLIC_UPSTREAM_TIMEOUT` | `20s` | Initial response timeout before authenticated fallback |
+| `PUBLIC_UPSTREAM_ENABLED` | `true` | Fixed anonymous providers are enabled by default; set `false` to disable all public routes |
+| `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | Fixed provider ids; arbitrary providers are ignored |
+| `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS override; Pollinations/Felo endpoints remain fixed |
+| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | OpenCode bare ids plus strict `provider/model` ids |
+| `PUBLIC_UPSTREAM_TIMEOUT` | `20s` | Initial response timeout before another public route or authenticated fallback |
 | `USER_AGENT` | see below | Override the chat request User-Agent |
 | `DEBUG_UPSTREAM` | off | `1` prints upstream request details (token redacted) |
 
@@ -71,9 +72,9 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 ## Public anonymous provider
 
-The proxy tries the current OpenCode-compatible public endpoint before the authenticated Freebuff session path by default. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable it and use the authenticated Freebuff path only. The base URL is restricted to `opencode.ai` over HTTPS and model routing is restricted to `PUBLIC_UPSTREAM_MODELS`.
+The proxy aggregates three explicitly fixed routes before the authenticated Freebuff session path: OpenCode Zen, keyless Pollinations, and Felo's reverse-engineered web protocol. OpenCode keeps bare ids; Pollinations and Felo require strict `pollinations/<model>` and `felo/<model>` namespaces. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes, or narrow the provider/model lists. `PUBLIC_UPSTREAM_BASE_URL` is restricted to `opencode.ai` and never changes the fixed Pollinations/Felo destinations.
 
-The public client receives only the OpenAI-compatible JSON body. It does not receive the downstream `Authorization`, `x-api-key`, cookies, or any Freebuff account token. A timeout, 401, 408, 425, 429, or 5xx response is treated as transient and falls back to Freebuff before response headers are committed. A normal 4xx is returned directly. Prompts and code for allowlisted models are sent to OpenCode; review its current terms and privacy requirements before deployment.
+Public clients receive only the provider-specific body and headers. They do not receive downstream `Authorization`, `x-api-key`, cookies, or any Freebuff account token. A timeout, 401, 408, 425, 429, or 5xx response is treated as transient and tries another matching public route before authenticated fallback. A normal 4xx is returned directly. The Pollinations allowlist excludes premium/optional-key models. Felo has no official API and its web protocol may change. Prompts and code for allowlisted models are sent to the selected third parties; review their current terms and privacy requirements before deployment.
 
 When the public route is enabled, the standalone CLI may start without `AUTH_TOKENS` and can serve allowlisted public models. `AUTH_TOKENS` (or saved login credentials) is still needed for Freebuff-only models and fallback capacity. If the public provider fails without a configured token, the proxy returns a clear retryable error rather than crashing.
 

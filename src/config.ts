@@ -17,8 +17,9 @@
  *   MAX_BODY_SIZE        - maximum chat request body, e.g. "16mb" (default "16mb")
  *   MAX_CONCURRENT_REQUESTS - maximum in-flight chat requests (default 32)
  *   PUBLIC_UPSTREAM_ENABLED - enable the anonymous OpenCode-compatible route (default true; set false to disable)
- *   PUBLIC_UPSTREAM_BASE_URL - fixed allowlisted public upstream base URL
- *   PUBLIC_UPSTREAM_MODELS - comma-separated anonymous model allowlist
+ *   PUBLIC_UPSTREAM_PROVIDERS - comma-separated fixed public providers (default opencode,pollinations,felo)
+ *   PUBLIC_UPSTREAM_BASE_URL - optional OpenCode public upstream base URL override
+ *   PUBLIC_UPSTREAM_MODELS - comma-separated aggregated public model allowlist
  *   PUBLIC_UPSTREAM_TIMEOUT - public upstream header timeout (default 20s)
  */
 
@@ -59,11 +60,13 @@ export interface Config {
   maxBodyBytes: number;
   /** Maximum number of concurrent chat requests. */
   maxConcurrentRequests: number;
-  /** Whether the anonymous public provider is enabled. */
+  /** Whether the anonymous public providers are enabled. */
   publicUpstreamEnabled: boolean;
-  /** Fixed public provider base URL. */
+  /** Fixed public provider IDs enabled by the operator. */
+  publicUpstreamProviders: string[];
+  /** Optional OpenCode public provider base URL override. */
   publicUpstreamBaseURL: string;
-  /** Explicit model allowlist for the public provider. */
+  /** Explicit aggregated model allowlist for public providers. */
   publicUpstreamModels: string[];
   /** Public provider initial-response timeout. */
   publicUpstreamTimeoutMs: number;
@@ -82,6 +85,7 @@ interface RawConfig {
   MAX_BODY_SIZE?: string;
   MAX_CONCURRENT_REQUESTS?: string;
   PUBLIC_UPSTREAM_ENABLED?: string;
+  PUBLIC_UPSTREAM_PROVIDERS?: string[];
   PUBLIC_UPSTREAM_BASE_URL?: string;
   PUBLIC_UPSTREAM_MODELS?: string[];
   PUBLIC_UPSTREAM_TIMEOUT?: string;
@@ -96,6 +100,7 @@ const DEFAULTS: RawConfig = {
   MAX_BODY_SIZE: "16MB",
   MAX_CONCURRENT_REQUESTS: "32",
   PUBLIC_UPSTREAM_ENABLED: "true",
+  PUBLIC_UPSTREAM_PROVIDERS: ["opencode", "pollinations", "felo"],
   PUBLIC_UPSTREAM_BASE_URL: DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
   PUBLIC_UPSTREAM_TIMEOUT: "20s",
 };
@@ -200,6 +205,7 @@ interface ConfigOverrides {
   maxBodySize?: string;
   maxConcurrentRequests?: string;
   publicUpstreamEnabled?: boolean;
+  publicUpstreamProviders?: string[];
   publicUpstreamBaseURL?: string;
   publicUpstreamModels?: string[];
   publicUpstreamTimeout?: string;
@@ -227,6 +233,7 @@ function loadRawConfig(configPath?: string): RawConfig {
       if (parsed.MAX_BODY_SIZE !== undefined) cfg.MAX_BODY_SIZE = parsed.MAX_BODY_SIZE;
       if (parsed.MAX_CONCURRENT_REQUESTS !== undefined) cfg.MAX_CONCURRENT_REQUESTS = parsed.MAX_CONCURRENT_REQUESTS;
       if (parsed.PUBLIC_UPSTREAM_ENABLED !== undefined) cfg.PUBLIC_UPSTREAM_ENABLED = parsed.PUBLIC_UPSTREAM_ENABLED;
+      if (parsed.PUBLIC_UPSTREAM_PROVIDERS !== undefined && Array.isArray(parsed.PUBLIC_UPSTREAM_PROVIDERS)) cfg.PUBLIC_UPSTREAM_PROVIDERS = parsed.PUBLIC_UPSTREAM_PROVIDERS;
       if (parsed.PUBLIC_UPSTREAM_BASE_URL !== undefined) cfg.PUBLIC_UPSTREAM_BASE_URL = parsed.PUBLIC_UPSTREAM_BASE_URL;
       if (parsed.PUBLIC_UPSTREAM_MODELS !== undefined && Array.isArray(parsed.PUBLIC_UPSTREAM_MODELS)) cfg.PUBLIC_UPSTREAM_MODELS = parsed.PUBLIC_UPSTREAM_MODELS;
       if (parsed.PUBLIC_UPSTREAM_TIMEOUT !== undefined) cfg.PUBLIC_UPSTREAM_TIMEOUT = parsed.PUBLIC_UPSTREAM_TIMEOUT;
@@ -253,6 +260,7 @@ function loadRawConfig(configPath?: string): RawConfig {
   if (env.MAX_BODY_SIZE) cfg.MAX_BODY_SIZE = env.MAX_BODY_SIZE;
   if (env.MAX_CONCURRENT_REQUESTS) cfg.MAX_CONCURRENT_REQUESTS = env.MAX_CONCURRENT_REQUESTS;
   if (env.PUBLIC_UPSTREAM_ENABLED) cfg.PUBLIC_UPSTREAM_ENABLED = env.PUBLIC_UPSTREAM_ENABLED;
+  if (env.PUBLIC_UPSTREAM_PROVIDERS) cfg.PUBLIC_UPSTREAM_PROVIDERS = splitList(env.PUBLIC_UPSTREAM_PROVIDERS);
   if (env.PUBLIC_UPSTREAM_BASE_URL) cfg.PUBLIC_UPSTREAM_BASE_URL = env.PUBLIC_UPSTREAM_BASE_URL;
   if (env.PUBLIC_UPSTREAM_MODELS) cfg.PUBLIC_UPSTREAM_MODELS = splitList(env.PUBLIC_UPSTREAM_MODELS);
   if (env.PUBLIC_UPSTREAM_TIMEOUT) cfg.PUBLIC_UPSTREAM_TIMEOUT = env.PUBLIC_UPSTREAM_TIMEOUT;
@@ -282,7 +290,10 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
   // Token resolution: env / config.json AUTH_TOKENS first, then the saved
   // `freebuff2api login` credentials (~/.config/freebuff2api/credentials.json).
   const publicUpstreamBaseURL = (options.publicUpstreamBaseURL ?? raw.PUBLIC_UPSTREAM_BASE_URL ?? DEFAULT_PUBLIC_UPSTREAM_BASE_URL).replace(/\/+$/, "");
-  validatePublicUpstreamURL(publicUpstreamBaseURL, [...DEFAULT_PUBLIC_UPSTREAM_ALLOWED_HOSTS]);
+  // This setting is specifically the OpenCode override. Pollinations and Felo
+  // use their own fixed endpoints and are never redirected by it.
+  validatePublicUpstreamURL(publicUpstreamBaseURL, ["opencode.ai"]);
+  const publicUpstreamProviders = dedupe(options.publicUpstreamProviders ?? raw.PUBLIC_UPSTREAM_PROVIDERS ?? ["opencode", "pollinations", "felo"]);
   const publicUpstreamModels = dedupe(options.publicUpstreamModels ?? raw.PUBLIC_UPSTREAM_MODELS ?? [...DEFAULT_PUBLIC_UPSTREAM_MODELS]);
   const publicUpstreamEnabled = options.publicUpstreamEnabled ?? /^(1|true|yes|on)$/i.test(raw.PUBLIC_UPSTREAM_ENABLED ?? "true");
 
@@ -337,6 +348,7 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
       Math.round(Number.parseInt(options.maxConcurrentRequests ?? raw.MAX_CONCURRENT_REQUESTS ?? "32", 10) || DEFAULT_MAX_CONCURRENT_REQUESTS),
     ),
     publicUpstreamEnabled,
+    publicUpstreamProviders,
     publicUpstreamBaseURL,
     publicUpstreamModels,
     publicUpstreamTimeoutMs: parseDuration(options.publicUpstreamTimeout ?? raw.PUBLIC_UPSTREAM_TIMEOUT ?? "20s", 20_000),
