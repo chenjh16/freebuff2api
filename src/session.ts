@@ -16,6 +16,13 @@ export const TOKEN_COOLDOWN_MS = 30 * 60_000;
 
 const ENDED_STATUSES = new Set(["none", "ended", "superseded"]);
 
+/**
+ * How many times `refresh()` may re-create a session that the upstream keeps
+ * reporting as ended/none/superseded before giving up. Bounds the loop so a
+ * misbehaving backend cannot cause an infinite POST ping-pong.
+ */
+const MAX_SESSION_RECREATE = 3;
+
 export class WaitingRoomError extends Error {
   constructor(
     readonly retryAfterMs: number,
@@ -152,6 +159,7 @@ export class SessionPool {
       state = await this.client.createOrRefreshSession(this.token, { model, signal });
     }
 
+    let recreated = 0;
     for (;;) {
       const status = (state.status ?? "").trim();
       switch (true) {
@@ -173,6 +181,15 @@ export class SessionPool {
           return { status: "queued", model: model ?? null, instanceId, expiresAt: 0, position, queueDepth, pollAt: Date.now() + retryAfterMs, retryAfterMs };
         }
         case ENDED_STATUSES.has(status):
+          if (recreated >= MAX_SESSION_RECREATE) {
+            throw new UpstreamError(
+              `free session kept returning "${status}" after ${MAX_SESSION_RECREATE} refresh attempts; giving up`,
+              503,
+              undefined,
+              status,
+            );
+          }
+          recreated += 1;
           state = await this.client.createOrRefreshSession(this.token, { model, signal });
           continue;
         default:

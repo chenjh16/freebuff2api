@@ -52,6 +52,26 @@ describe("TokenManager session failover", () => {
     expect(calls).toEqual(["first"]);
   });
 
+  test("bounds the ended-status session re-create loop", async () => {
+    let calls = 0;
+    const client = {
+      createOrRefreshSession: async () => {
+        calls += 1;
+        return { status: "ended" };
+      },
+      getSession: async () => ({ status: "ended" }),
+    };
+
+    const manager = new TokenManager(["only-token"], client as never, () => {});
+    const error = await manager.acquireSession("deepseek/deepseek-v4-flash").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UpstreamError);
+    expect((error as UpstreamError).statusCode).toBe(503);
+    expect(String(error)).toContain("kept returning");
+    // 1 initial POST + the bounded 3 re-creates, then it gives up instead of
+    // pinging the upstream forever.
+    expect(calls).toBe(4);
+  });
+
   test("surfaces model-unavailable session states instead of retrying forever", async () => {
     let calls = 0;
     const client = {

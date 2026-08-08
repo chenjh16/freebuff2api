@@ -63,7 +63,7 @@ tools/           debugging & analysis scripts (see tools/README.md)
 | `session.ts` | One `SessionPool` per token; `TokenManager` handles rotation and cooldown |
 | `runs.ts` | `RunManager` caches runId per (token, agent), rotates when expired |
 | `models.ts` | Fetches the official `free-agents.ts` from GitHub and parses the Agent→model mapping (6h refresh) |
-| `handler.ts` | Shared `/healthz`, `/v1/models`, `/v1/chat/completions` routing, public-provider priority, auth, validation, fallback and CLI marker injection |
+| `handler.ts` | Shared `/healthz`, `/v1/models`, `/v1/chat/completions`, `/v1/images/generations` routing, public-provider priority, auth, validation, fallback and CLI marker injection |
 | `server.ts` | Adapts node:http streams to the shared web-native handler |
 
 ## Public surface

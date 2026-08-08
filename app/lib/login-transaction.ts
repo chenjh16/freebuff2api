@@ -68,7 +68,7 @@ export async function pollLoginTransaction(id: string, loginBaseURL: string): Pr
       fingerprintHash: tx.fingerprintHash,
       expiresAt: tx.expiresAt,
       loginUrl: tx.loginUrl,
-      createdAt: Date.now(),
+      createdAt: tx.createdAt,
     },
     { intervalMs: 3_000, timeoutMs: 9_000 },
   );

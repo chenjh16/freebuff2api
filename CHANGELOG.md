@@ -31,9 +31,22 @@
   不再原地改写客户端 messages 数组。
 - **模型目录变更告警**：`ModelRegistry` 远程刷新后若模型集合发生变化，日志输出
   增减明细，便于发现上游常量解析的静默漂移。
+- **会话重建循环加限**：`SessionPool.refresh()` 对上游持续返回
+  `ended/none/superseded` 的重建次数加限（最多 3 次），避免后端异常时无限
+  POST 往返（此前只能靠请求超时中断）；新增单元测试。
 
 ### Fixed
 
+- **`GET /api/auth/status` 补充 `maxDuration`**：每次轮询最长约 9s，显式设置
+  路由超时上限（chat/images 路由已设置），避免部分托管平台默认限制截断轮询。
+- **试玩面板清理**：登录成功后移除对过期闭包 `refreshModels()` 的无效果调用
+  （模型列表改由 `session` 变化 effect 刷新）；`DEFAULT_MODEL` 注释改为准确
+  的“公共渠道模型、无需上游 token”；登录事务轮询保留原始 `createdAt`。
+- **文档与示例对齐**：docs/en/01 的 `handler.ts` 模块表补
+  `/v1/images/generations`（与 zh 版一致）；docs 07（en/zh）图片参数列表补
+  `image` 参考图 / img2img（POST）；根 README 试玩面板描述补图片生成与图片
+  上传；`env.example` 补 `PROXY_SECRET_FILE` 说明；合并 CHANGELOG Unreleased
+  中重复的 `### Changed` 标题。
 - **公共上游流式响应兼容严格客户端（Cherry Studio 报
   `AI_FinishReasonError: Response ended with finish reason "other"`）**：
   OpenCode Zen 免费层在输出完 `reasoning_content` 后可能直接结束、不发送任何
@@ -79,8 +92,6 @@
   `image_url` content 数组做多模态输入；图片模型可附参考图做 img2img / 编辑
   （`PollinationsImageClient` 支持 `image` 字段，有参考图时改用 POST 携带，
   已对线上上游实测验证）。新增 2 个单元测试（img2img POST、多图/超限拒绝）
-
-### Changed
 
 - 主页头部 UI 对齐 freebuff.com：左上角改为官方 logo
   （`public/logo-icon.png`）+ 衬线 `freebuff` 字标（链接到 freebuff.com）；

@@ -29,9 +29,10 @@ interface PendingLogin {
 const SESSION_KEY = "freebuff2api_session";
 const PENDING_KEY = "freebuff2api_pending";
 const GATE_KEY = "freebuff2api_site_token";
-// Default to the public OpenCode Zen channel model: it needs no Freebuff
-// account token, so the playground works for a signed-out visitor the moment
-// the model list loads (and stays valid once the page switches to ids[0]).
+// Default to a public OpenCode Zen channel model: it needs no upstream
+// account token, so the first request succeeds even when the deployment has
+// no AUTH_TOKENS configured (and stays valid once the list switches to
+// ids[0]).
 const DEFAULT_MODEL = "opencode/deepseek-v4-flash-free";
 
 /** Playground image attachments and image-model output sizes. */
@@ -315,7 +316,9 @@ export default function Home() {
         setWaiting(false);
         clearStored(PENDING_KEY);
         showToast("Signed in — API key ready");
-        void refreshModels();
+        // Model list refresh happens via the [session, refreshModels] effect
+        // once `session` is set; a call here would use the stale closure
+        // (session is still null) and never run.
       } catch (error) {
         setLoginError(error instanceof Error ? error.message : String(error));
         setWaiting(false);
@@ -323,7 +326,7 @@ export default function Home() {
         setLoginBusy(false);
       }
     },
-    [refreshModels, showToast],
+    [showToast],
   );
 
   const stopPolling = useCallback(() => {

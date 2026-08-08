@@ -8,6 +8,9 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+// Each poll can take up to ~9s (upstream poll window); keep the route under
+// hosted per-request limits (chat/images routes already set maxDuration).
+export const maxDuration = 30;
 
 export async function GET(request: Request): Promise<Response> {
   try {

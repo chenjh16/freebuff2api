@@ -77,8 +77,9 @@ curl https://open.freebuff.app/v1/chat/completions \
   -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-The console also includes a built-in **model playground** (streaming replies +
-Thinking output) so you can try models right in the browser.
+The console also includes a built-in **model playground** (streaming replies,
+Thinking output, image generation with image models, and image upload for
+multimodal chat / img2img) so you can try models right in the browser.
 
 > The site may be protected by a **gate token** (`SITE_ACCESS_TOKEN`): if you
 > see a lock screen, enter the token or open the site with
@@ -256,7 +257,8 @@ Notes:
 
 - Hosting runs `next build` automatically; `build:web` only produces the
   build output and never starts a server.
-- `/` serves a small live console (health, model list, try-a-chat).
+- `/` serves a small live console (health, model list, try-a-chat / image
+  generation).
 - **Site gate:** set `SITE_ACCESS_TOKEN` and the console shows a lock screen
   until the visitor enters the token (or opens the site with
   `https://…/?token=…`); the browser then remembers it. Unset = console open.
@@ -371,8 +373,8 @@ curl https://open.freebuff.app/v1/chat/completions \
   -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-控制台还内置**模型测试界面**（流式回复 + Thinking 输出），可以直接在浏览器
-里试用模型。
+控制台还内置**模型测试界面**（流式回复 + Thinking 输出、图片模型生图、
+图片上传做多模态输入 / img2img 参考图），可以直接在浏览器里试用模型。
 
 > 网站可能受**门禁 token**（`SITE_ACCESS_TOKEN`）保护：如果看到锁屏，输入
 > token，或直接打开 `https://open.freebuff.app/?token=…`。门禁只是控制台的
@@ -530,7 +532,7 @@ curl https://open.freebuff.app/v1/chat/completions \
 
 - 托管环境会自动执行 `next build`；`build:web` 只产出构建结果，绝不会
   启动服务器。
-- `/` 是一个小型在线控制台（健康状态、模型列表、试聊）。
+- `/` 是一个小型在线控制台（健康状态、模型列表、试聊/生图）。
 - **站点门禁：** 设置 `SITE_ACCESS_TOKEN` 后，控制台显示锁屏，访客必须
   输入 token（或通过 `https://…/?token=…` 打开）才能进入；浏览器会记住
   该 token。未设置则控制台保持开放。门禁只是控制台的"前门"——`/v1`
