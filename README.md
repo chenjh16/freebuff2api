@@ -74,7 +74,7 @@ The hosted app is already deployed at **`https://open.freebuff.app`**:
 curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer <your sk-fb-... API key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 The console also includes a built-in **model playground** (streaming replies +
@@ -105,18 +105,17 @@ bun run dev:cli    # standalone proxy server (was `bun run dev` in older version
 curl http://localhost:23333/v1/models
 curl http://localhost:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 
 ## How it works
 
-Every model id has a canonical `provider/model` form (`freebuff/…`,
-`opencode/…`, `pollinations/…`, `felo/…`) **and** a bare alias without the
-provider prefix. Bare aliases are deduplicated and route by provider priority
-(`PUBLIC_UPSTREAM_PROVIDERS` order, Freebuff last). Public models are sent to
-the selected fixed provider without forwarding client credentials; set
+Every model id is provider-namespaced (`freebuff/…`, `opencode/…`,
+`pollinations/…`, `felo/…`); unprefixed ids are neither listed nor routable, so
+a model id always names its provider. Public models are sent to the selected
+fixed provider without forwarding client credentials; set
 `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes. Requests that use
 Freebuff-only models, or transient public-provider failures, use the
 authenticated Freebuff session path:
@@ -213,7 +212,7 @@ uses). Keep it secret — it grants API usage on your account.
 | POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
 | POST   | `/v1/images/generations` | OpenAI image generation (Pollinations, anonymous, base64 results) |
 
-By default, the proxy aggregates four explicitly reviewed public capabilities: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id has a canonical `provider/model` form plus a bare alias (`opencode/big-pickle` and `big-pickle`, `pollinations/openai` and `openai`, `felo/felo-chat` and `felo-chat`, `freebuff/<model>` and the bare id); bare aliases route by `PUBLIC_UPSTREAM_PROVIDERS` priority with Freebuff last. Set `PUBLIC_UPSTREAM_ENABLED=false` to use the authenticated Freebuff path only, or narrow `PUBLIC_UPSTREAM_PROVIDERS` / `PUBLIC_UPSTREAM_MODELS` / `PUBLIC_UPSTREAM_IMAGE_MODELS`. `PUBLIC_UPSTREAM_BASE_URL` can override only the allowlisted OpenCode host; Pollinations and Felo always use their fixed HTTPS endpoints. No downstream API keys, cookies, or Freebuff account tokens are forwarded. Timeout, 401, 408, 425, 429, and 5xx responses try another matching public route and then authenticated Freebuff; a normal 4xx is returned directly. The public routes receive prompts and code, and Felo has no official API, so review each provider's terms and privacy posture before deployment.
+By default, the proxy aggregates four explicitly reviewed public capabilities: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id is provider-namespaced (`opencode/big-pickle`, `pollinations/openai`, `felo/felo-chat`, `freebuff/<model>`); unprefixed ids are neither listed nor routable. Set `PUBLIC_UPSTREAM_ENABLED=false` to use the authenticated Freebuff path only, or narrow `PUBLIC_UPSTREAM_PROVIDERS` / `PUBLIC_UPSTREAM_MODELS` / `PUBLIC_UPSTREAM_IMAGE_MODELS`. `PUBLIC_UPSTREAM_BASE_URL` can override only the allowlisted OpenCode host; Pollinations and Felo always use their fixed HTTPS endpoints. No downstream API keys, cookies, or Freebuff account tokens are forwarded. Timeout, 401, 408, 425, 429, and 5xx responses try another matching public route and then authenticated Freebuff; a normal 4xx is returned directly. The public routes receive prompts and code, and Felo has no official API, so review each provider's terms and privacy posture before deployment.
 
 Models are kept in sync with the official client by fetching
 `CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
@@ -250,7 +249,7 @@ freebuff-deploy start
 curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer <your-explicit-api-key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 Notes:
@@ -300,6 +299,9 @@ bun run check       # typecheck + build
 - [`docs/en/06-e2e-test-records.md`](docs/en/06-e2e-test-records.md) — stage 9:
   dual-model re-verification (proxy + official CLI, MITM captured) and the
   503 root-cause analysis
+- [`docs/en/10-public-upstream-channels.md`](docs/en/10-public-upstream-channels.md) — the
+  fixed public channels (OpenCode / Pollinations / Felo), their verified
+  quirks, streaming normalization, and Cherry Studio compatibility
 
 ## Contributing
 
@@ -366,7 +368,7 @@ Node 22+ 上用 `node --experimental-strip-types` 或先 `bun run build:cli` 后
 curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer <你的 sk-fb-... API Key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 控制台还内置**模型测试界面**（流式回复 + Thinking 输出），可以直接在浏览器
@@ -394,14 +396,14 @@ bun run dev:cli    # 独立代理服务器（旧版本为 `bun run dev`）
 curl http://localhost:23333/v1/models
 curl http://localhost:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 把任何 OpenAI 兼容客户端指向 `http://localhost:23333/v1` 即可。
 
 ## 工作原理
 
-所有模型 ID 都同时提供 `provider/model` 规范形式（`freebuff/…`、`opencode/…`、`pollinations/…`、`felo/…`）与不带供应商前缀的裸别名；裸别名去重后按 `PUBLIC_UPSTREAM_PROVIDERS` 顺序（Freebuff 最后）路由。默认启用固定 HTTPS 公共上游集合（OpenCode Zen、免 key 的 Pollinations——含 chat 与图片生成、Felo 逆向网页协议适配），不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭全部公共链路。公共提供商按匹配模型尝试并在瞬态失败时回退认证链路。
+所有模型 ID 都使用带供应商命名空间的 `provider/model` 规范形式（`freebuff/…`、`opencode/…`、`pollinations/…`、`felo/…`），不带前缀的裸 ID 不会被列出也不可路由，因此模型 ID 总是标明其供应商。默认启用固定 HTTPS 公共上游集合（OpenCode Zen、免 key 的 Pollinations——含 chat 与图片生成、Felo 逆向网页协议适配），不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭全部公共链路。公共提供商按匹配模型尝试并在瞬态失败时回退认证链路。
 
 Freebuff 的免费档按**会话（session）**发放。认证链路对每次 chat 请求：
 
@@ -470,7 +472,7 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 参见 [`config.example.json`](config.example.json) 与
 [`env.example`](env.example)。
 
-默认公共上游开启时，独立 CLI 可以不配置 `AUTH_TOKENS` 直接使用白名单公共模型（例如 `big-pickle`、`pollinations/openai`、`felo/felo-chat`）；使用 Freebuff 专属模型、认证回退或设置
+默认公共上游开启时，独立 CLI 可以不配置 `AUTH_TOKENS` 直接使用白名单公共模型（例如 `opencode/big-pickle`、`pollinations/openai`、`felo/felo-chat`）；使用 Freebuff 专属模型、认证回退或设置
 `PUBLIC_UPSTREAM_ENABLED=false` 时，需要 `AUTH_TOKENS` 或已保存的登录凭证。
 托管网页登录模式可以不设置它，访客登录后使用自己的 `sk-fb-*` key。
 
@@ -486,7 +488,7 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 | POST | `/v1/chat/completions`   | OpenAI chat completions（支持流式）        |
 | POST | `/v1/images/generations` | OpenAI 图片生成（Pollinations，匿名，返回 base64） |
 
-默认情况下，代理聚合四个经过实测的公共能力：OpenCode Zen、免 key 的 Pollinations（chat 与图片生成）、Felo 逆向网页协议适配。每个模型 ID 都有规范的 `provider/model` 形式与裸别名（`opencode/big-pickle` 与 `big-pickle`、`pollinations/openai` 与 `openai`、`felo/felo-chat` 与 `felo-chat`、`freebuff/<model>` 与裸 ID）；裸别名按 `PUBLIC_UPSTREAM_PROVIDERS` 优先级（Freebuff 最后）路由。设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路；也可以用 `PUBLIC_UPSTREAM_PROVIDERS`、`PUBLIC_UPSTREAM_MODELS` 与 `PUBLIC_UPSTREAM_IMAGE_MODELS` 缩小范围。不会向公共上游转发下游 API Key、Cookie 或 Freebuff 账号 token；公共提供商按匹配模型尝试，超时、401、408、425、429、5xx 等瞬态失败才继续尝试其他公共 provider 或回退到 Freebuff，普通 4xx 直接返回。Pollinations 白名单只包含实测无 key 可调用的模型（2026-08-08 实测：`gemini-flash-lite-3.1`、`perplexity-reasoning` 即使最简 prompt 也 401，已排除；其余模型对部分 prompt 形状也会返回 401，建议配合重试与 Freebuff 回退）。Felo 是无官方 API 的逆向网页协议，可能随时变化。所有公共上游都会接收请求中的提示词和代码，部署前请确认服务条款与隐私要求。
+默认情况下，代理聚合四个经过实测的公共能力：OpenCode Zen、免 key 的 Pollinations（chat 与图片生成）、Felo 逆向网页协议适配。每个模型 ID 都是带供应商命名空间的 `provider/model` 形式（`opencode/big-pickle`、`pollinations/openai`、`felo/felo-chat`、`freebuff/<model>`），不带前缀的裸 ID 不会被列出也不可路由。设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路；也可以用 `PUBLIC_UPSTREAM_PROVIDERS`、`PUBLIC_UPSTREAM_MODELS` 与 `PUBLIC_UPSTREAM_IMAGE_MODELS` 缩小范围。不会向公共上游转发下游 API Key、Cookie 或 Freebuff 账号 token；公共提供商按匹配模型尝试，超时、401、408、425、429、5xx 等瞬态失败才继续尝试其他公共 provider 或回退到 Freebuff，普通 4xx 直接返回。Pollinations 白名单只包含实测无 key 可调用的模型（2026-08-08 实测：`gemini-flash-lite-3.1`、`perplexity-reasoning` 即使最简 prompt 也 401，已排除；其余模型对部分 prompt 形状也会返回 401，建议配合重试与 Freebuff 回退）。Felo 是无官方 API 的逆向网页协议，可能随时变化。所有公共上游都会接收请求中的提示词和代码，部署前请确认服务条款与隐私要求。
 
 模型列表与官方客户端保持同步：每 6 小时抓取 `CodebuffAI/freebuff` 的
 `free-agents.ts`；抓取失败时使用内置兜底映射，保证代理可用。
@@ -521,7 +523,7 @@ freebuff-deploy start
 curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer <your-explicit-api-key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 注意事项：
@@ -566,6 +568,9 @@ bun run check       # typecheck + build
   免费档网关机制与正确请求格式
 - [`docs/zh/06-端到端测试记录.md`](docs/zh/06-端到端测试记录.md) — 阶段 9：
   双模型复测（代理 + 官方 CLI，MITM 抓包）与 503 根因分析
+- [`docs/zh/10-公共上游渠道.md`](docs/zh/10-公共上游渠道.md) — 固定公共渠道
+  （OpenCode / Pollinations / Felo）、实测行为、流式规范化与 Cherry Studio
+  兼容性
 
 ## 贡献
 

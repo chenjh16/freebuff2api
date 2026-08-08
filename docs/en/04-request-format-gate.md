@@ -107,7 +107,7 @@ the gate — the proxy injects the marker automatically.
 ```bash
 curl http://127.0.0.1:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
 ```
 
 - ✅ Streaming (`stream: true`): HTTP 200, SSE pushes `chat.completion.chunk`

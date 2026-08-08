@@ -65,11 +65,12 @@ export const DEFAULT_POLLINATIONS_IMAGE_MODELS = [
 ] as const;
 
 /**
- * Canonical public model IDs. OpenCode keeps its historical bare IDs for
- * compatibility; additional providers are namespaced to avoid collisions.
+ * Canonical public model IDs. Every id is provider-namespaced
+ * (`opencode/<model>`, `pollinations/<model>`, `felo/<model>`) so a model id
+ * always names its channel; unprefixed aliases are not exposed.
  */
 export const DEFAULT_PUBLIC_UPSTREAM_MODELS = [
-  ...DEFAULT_OPENCODE_MODELS,
+  ...DEFAULT_OPENCODE_MODELS.map((model) => `opencode/${model}`),
   ...DEFAULT_POLLINATIONS_MODELS.map((model) => `pollinations/${model}`),
   ...DEFAULT_FELO_MODELS.map((model) => `felo/${model}`),
 ] as const;
@@ -95,6 +96,121 @@ function copyResponse(response: Response, body: string): Response {
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
+/** OpenAI-standard streaming finish reasons. Anything else is upstream noise. */
+const OPENAI_STREAM_FINISH_REASONS = new Set(["stop", "length", "content_filter", "tool_calls", "function_call"]);
+
+/**
+ * Rewrites an OpenAI-compatible SSE chat stream into a strictly well-formed
+ * one for strict clients (the Vercel AI SDK used by Cherry Studio aborts with
+ * AI_FinishReasonError when a stream ends with an unknown finish reason or
+ * with no finish chunk at all). OpenCode Zen's router occasionally:
+ *   - ends a stream right after reasoning_content without any chunk carrying a
+ *     finish_reason (the client then synthesizes finish reason "other" and
+ *     surfaces AI_FinishReasonError instead of the (possibly empty) reply),
+ *   - emits a non-standard finish_reason such as "other", or
+ *   - appends trailing chunks like {"choices":[],"cost":"0"}.
+ * This transform forwards content/reasoning deltas untouched, rewrites any
+ * non-standard finish_reason to "stop", synthesizes a terminal "stop" chunk
+ * when the upstream ended without one, drops malformed lines and junk chunks
+ * (no choices and no usage), and guarantees a single trailing "data: [DONE]".
+ */
+export function sanitizeOpenAIStream(response: Response): Response {
+  if (!response.body) return response;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("text/event-stream")) return response;
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let sawFinish = false;
+  let id = "chatcmpl-sanitized";
+  let model = "";
+  let created = Math.floor(Date.now() / 1000);
+
+  /** Returns the sanitized line to emit, or null to drop it. */
+  const sanitizeLine = (line: string): string | null => {
+    const trimmed = line.trim();
+    if (!trimmed) return ""; // keep the blank SSE separator
+    if (!trimmed.startsWith("data:")) return line; // event:/: lines pass through
+    const payload = trimmed.slice(5).trim();
+    if (payload === "[DONE]") {
+      return null; // defer: a synthetic finish chunk must land before [DONE]
+    }
+    let chunk: Record<string, unknown>;
+    try {
+      chunk = JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      return null; // drop malformed data lines
+    }
+    const choices = Array.isArray(chunk.choices) ? (chunk.choices as Record<string, unknown>[]) : [];
+    if (typeof chunk.id === "string" && chunk.id) id = chunk.id;
+    if (typeof chunk.model === "string" && chunk.model) model = chunk.model;
+    if (typeof chunk.created === "number" && Number.isFinite(chunk.created)) created = chunk.created;
+    const first = choices[0];
+    if (first) {
+      const finish = first.finish_reason;
+      if (typeof finish === "string") {
+        if (OPENAI_STREAM_FINISH_REASONS.has(finish)) {
+          sawFinish = true;
+        } else {
+          // Non-standard termination ("other", "unknown", ...): rewrite so
+          // strict clients treat it as a normal stop.
+          first.finish_reason = "stop";
+          sawFinish = true;
+        }
+      }
+    }
+    // Drop junk chunks that carry neither a choice nor usage (e.g. the
+    // {"choices":[],"cost":"0"} trailer OpenCode appends).
+    const hasChoice = choices.some((choice) => choice && typeof choice === "object");
+    const hasUsage = chunk.usage !== undefined && chunk.usage !== null;
+    if (!hasChoice && !hasUsage) return null;
+    return `data: ${JSON.stringify(chunk)}`;
+  };
+
+  const transformed = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const emitted = sanitizeLine(line);
+        if (emitted !== null) controller.enqueue(encoder.encode(`${emitted}\n`));
+      }
+    },
+    flush(controller) {
+      if (buffer) {
+        const emitted = sanitizeLine(buffer);
+        if (emitted !== null) controller.enqueue(encoder.encode(`${emitted}\n`));
+      }
+      if (!sawFinish) {
+        // The upstream stream ended without a recognized finish chunk (a
+        // common OpenCode free-tier truncation after reasoning). Emit a
+        // terminal stop so strict clients do not synthesize "other".
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`));
+      }
+      // Always terminate with exactly one [DONE]: it was deferred above (or
+      // synthesized here) so any needed finish chunk lands before it.
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    },
+  }));
+
+  const headers = new Headers();
+  response.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (["content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive"].includes(lower)) return;
+    headers.set(key, value);
+  });
+  headers.set("Content-Type", "text/event-stream; charset=utf-8");
+  return new Response(transformed, { status: response.status, headers });
+}
+
 function imageErrorResponse(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: { message, type: "invalid_request_error" } }), {
     status,
@@ -105,6 +221,12 @@ function imageErrorResponse(status: number, message: string): Response {
 function modelWithoutProviderPrefix(model: string, providerId: string): string {
   const prefix = `${providerId}/`;
   return model.startsWith(prefix) ? model.slice(prefix.length) : model;
+}
+
+/** Ensure a model id carries its provider's namespace prefix. */
+function ensureProviderPrefix(model: string, providerId: string): string {
+  const prefix = `${providerId}/`;
+  return model.startsWith(prefix) ? model : prefix + model;
 }
 
 /** OpenAI-compatible public client for OpenCode and Pollinations. */
@@ -125,16 +247,10 @@ export class PublicUpstreamClient {
     );
     this.baseURL = parsed.toString().replace(/\/+$/, "");
     const canonical = options.models.map((model) => model.trim()).filter(Boolean);
-    // Advertise both the namespaced canonical id and its bare alias so a caller
-    // can always address a model with or without the provider prefix. Bare
-    // alias collisions across providers are resolved by provider priority in
-    // the router/handler, not here.
-    this.modelsSet = new Set([
-      ...canonical,
-      ...canonical.map((model) =>
-        this.providerId === "opencode" ? `opencode/${model}` : modelWithoutProviderPrefix(model, this.providerId),
-      ),
-    ]);
+    // Advertise only the provider-namespaced id (`opencode/<model>`,
+    // `pollinations/<model>`). Unprefixed aliases are intentionally not
+    // exposed: at the proxy surface every model id must name its provider.
+    this.modelsSet = new Set(canonical.map((model) => ensureProviderPrefix(model, this.providerId)));
     this.timeoutMs = Math.max(1_000, options.timeoutMs);
     this.fetchFn = options.fetchFn ?? fetch;
   }
@@ -161,12 +277,15 @@ export class PublicUpstreamClient {
     try {
       // Never merge inbound headers. No downstream API key, cookie, or
       // Freebuff account token may reach a public provider.
-      return await this.fetchFn(`${this.baseURL}/chat/completions`, {
+      const response = await this.fetchFn(`${this.baseURL}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "*/*" },
         body: outboundBody,
         signal: requestSignal,
       });
+      // Strict clients (Cherry Studio's AI SDK) abort on non-standard or
+      // missing finish chunks; normalize OpenAI-compatible streams here.
+      return (response.headers.get("content-type") ?? "").includes("text/event-stream") ? sanitizeOpenAIStream(response) : response;
     } catch (error) {
       if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
         throw new UpstreamError(`${this.providerId} public upstream request timed out after ${this.timeoutMs}ms`, 0);
@@ -272,6 +391,9 @@ function feloSse(response: Response): Response {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: parsed.text } }] })}\n\n`));
         }
       }
+      // Felo's web protocol has no OpenAI finish chunk; strict clients need
+      // a terminal stop before [DONE] or they synthesize "other" and abort.
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`));
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     },
   }));
@@ -294,10 +416,9 @@ export class PollinationsImageClient {
 
   constructor(options: { models: string[]; timeoutMs: number; fetchFn?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }) {
     validatePublicUpstreamURL(DEFAULT_POLLINATIONS_IMAGE_BASE_URL, ["image.pollinations.ai"]);
-    this.modelsSet = new Set([
-      ...options.models,
-      ...options.models.map((model) => modelWithoutProviderPrefix(model, "pollinations")),
-    ]);
+    // Provider-namespaced ids only (`pollinations/flux`, ...); the bare alias
+    // is not exposed.
+    this.modelsSet = new Set(options.models.map((model) => ensureProviderPrefix(model, "pollinations")));
     this.timeoutMs = Math.max(60_000, options.timeoutMs);
     this.fetchFn = options.fetchFn ?? fetch;
   }
@@ -316,10 +437,10 @@ export class PollinationsImageClient {
       return imageErrorResponse(400, "request body must be valid JSON");
     }
     const rawModel = typeof payload.model === "string" ? payload.model.trim() : "";
-    const model = modelWithoutProviderPrefix(rawModel, "pollinations");
-    if (!model || !this.modelsSet.has(model)) {
+    if (!rawModel || !this.modelsSet.has(rawModel)) {
       return imageErrorResponse(400, `image generation is not supported for model "${rawModel}"`);
     }
+    const model = modelWithoutProviderPrefix(rawModel, "pollinations");
     const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
     if (!prompt) return imageErrorResponse(400, "prompt is required for image generation");
 
@@ -383,11 +504,8 @@ export class FeloPublicUpstreamClient {
 
   constructor(options: { models: string[]; timeoutMs: number; fetchFn?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }) {
     validatePublicUpstreamURL(DEFAULT_FELO_UPSTREAM_BASE_URL, ["felo.ai"]);
-    // Canonical `felo/<category>` ids plus their bare aliases.
-    this.modelsSet = new Set([
-      ...options.models,
-      ...options.models.map((model) => modelWithoutProviderPrefix(model, "felo")),
-    ]);
+    // Canonical `felo/<category>` ids only; bare aliases are not exposed.
+    this.modelsSet = new Set(options.models.map((model) => ensureProviderPrefix(model, "felo")));
     this.timeoutMs = Math.max(1_000, options.timeoutMs);
     this.fetchFn = options.fetchFn ?? fetch;
   }
@@ -529,7 +647,10 @@ export function createPublicUpstreamRouter(options: {
   const configuredModels = new Set(options.models);
   const includes = (provider: PublicUpstreamProviderId, model: string): boolean => {
     const canonical = provider === "opencode" ? model : `${provider}/${model}`;
-    return configuredModels.has(canonical);
+    // Accept both the historical bare OpenCode ids and provider-namespaced ids
+    // in the allowlist so existing operator configs keep working.
+    const prefixed = provider === "opencode" ? `opencode/${model}` : canonical;
+    return configuredModels.has(canonical) || configuredModels.has(prefixed);
   };
   const chatClients: PublicUpstreamChatLike[] = [];
   const imageClients: PublicUpstreamImageLike[] = [];

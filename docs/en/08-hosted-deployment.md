@@ -70,8 +70,9 @@ These are the same variables documented in
 [07 – Configuration & Usage](07-configuration-and-usage.md); the hosted app
 reads them from the deployment environment. The fixed public provider set (OpenCode Zen, keyless Pollinations — chat and image generation — and Felo's
 reverse-engineered web protocol) is enabled by default for its explicit
-allowlist. Every model id has a canonical `provider/model` form and a bare
-alias; bare aliases route by provider priority (Freebuff last). Set
+allowlist. Every model id is provider-namespaced (`freebuff/<model>`, `opencode/<model>`,
+`pollinations/<model>`, `felo/<model>`); unprefixed ids are neither listed nor
+routable. Set
 `PUBLIC_UPSTREAM_ENABLED=false` when prompts/code must stay on the
 authenticated Freebuff path. Public providers never receive downstream
 credentials, but they do receive the request body for routed models. Felo has
@@ -160,7 +161,7 @@ curl https://open.freebuff.app/v1/models \
 curl https://open.freebuff.app/v1/chat/completions \
   -H "Authorization: Bearer <your-explicit-api-key>" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 ## Behavior notes

@@ -8,7 +8,10 @@ import { WaitingRoomError, type TokenManager } from "../../src/session.ts";
 import { UpstreamError, type UpstreamClient } from "../../src/upstream.ts";
 
 const MARKER_PHRASE = "You are Buffy, the strategic coding assistant";
+/** Bare registry id (what the upstream APIs expect). */
 const MODEL = "deepseek/deepseek-v4-flash";
+/** Provider-namespaced id, the only form valid at the proxy surface. */
+const FB_MODEL = `freebuff/${MODEL}`;
 
 interface FullHarness {
   base: string;
@@ -81,10 +84,11 @@ function makeFullHarness(opts: {
 
   const registry = {
     status: () => ({ source: "fallback" as const, updatedAt: null, agentCount: 2, modelCount: 2 }),
-    models: () => opts.models ?? [MODEL],
+    models: () => opts.models ?? [FB_MODEL],
+    // Only `freebuff/<model>` ids route; bare registry ids are rejected.
     agentForModel: (m: string) =>
-      m.replace(/^freebuff\//, "") === MODEL ? "base2-free-deepseek-flash" : undefined,
-    canonicalModel: (m: string) => m.replace(/^freebuff\//, ""),
+      m.startsWith("freebuff/") && m.slice("freebuff/".length) === MODEL ? "base2-free-deepseek-flash" : undefined,
+    canonicalModel: (m: string) => (m.startsWith("freebuff/") ? m.slice("freebuff/".length) : m),
   } as unknown as ModelRegistry;
 
   const tokens = {
@@ -167,22 +171,24 @@ describe("Server HTTP surface", () => {
     expect(body.models).toBeUndefined();
   });
 
-  test("GET /v1/models lists the registered models", async () => {
+  test("GET /v1/models lists the registered models under the freebuff namespace", async () => {
     const resp = await fetch(`${base}/v1/models`);
     expect(resp.status).toBe(200);
-    const body = (await resp.json()) as { data: { id: string; object: string }[] };
-    expect(body.data.map((m) => m.id)).toContain(MODEL);
+    const body = (await resp.json()) as { data: { id: string; object: string; owned_by: string }[] };
+    expect(body.data.map((m) => m.id)).toContain(FB_MODEL);
     expect(body.data[0]?.object).toBe("model");
+    const freebuffEntry = body.data.find((m) => m.id === FB_MODEL);
+    expect(freebuffEntry?.owned_by).toBe("freebuff2api");
   });
 
-  test("GET /v1/models lists canonical ids and bare aliases for every provider", async () => {
+  test("GET /v1/models lists only provider-namespaced ids", async () => {
     const catalogHarness = makeFullHarness({
       publicUpstreamEnabled: true,
       publicUpstream: {
-        models: () => ["openai", "pollinations/openai", "big-pickle", "opencode/big-pickle"],
+        models: () => ["pollinations/openai", "opencode/big-pickle"],
         hasModel: () => true,
         chatCompletions: async () => new Response("{}", { status: 200 }),
-        imageModels: () => ["flux", "pollinations/flux"],
+        imageModels: () => ["pollinations/flux"],
         hasImageModel: () => false,
         imageGenerations: async () => new Response("{}", { status: 200 }),
       },
@@ -191,14 +197,22 @@ describe("Server HTTP surface", () => {
     try {
       const resp = await fetch(`${started.base}/v1/models`);
       expect(resp.status).toBe(200);
-      const body = (await resp.json()) as { data: { id: string }[] };
+      const body = (await resp.json()) as { data: { id: string; owned_by: string }[] };
       const ids = body.data.map((m) => m.id);
-      expect(ids).toContain(MODEL);
-      expect(ids).toContain(`freebuff/${MODEL}`);
-      expect(ids).toContain("openai");
+      expect(ids).toContain(FB_MODEL);
       expect(ids).toContain("pollinations/openai");
       expect(ids).toContain("opencode/big-pickle");
       expect(ids).toContain("pollinations/flux");
+      // No unprefixed forms are listed.
+      expect(ids).not.toContain(MODEL);
+      expect(ids).not.toContain("openai");
+      expect(ids).not.toContain("big-pickle");
+      expect(ids).not.toContain("flux");
+      // owned_by names the serving provider.
+      const byId = new Map(body.data.map((m) => [m.id, m.owned_by]));
+      expect(byId.get("opencode/big-pickle")).toBe("opencode");
+      expect(byId.get("pollinations/openai")).toBe("pollinations");
+      expect(byId.get("pollinations/flux")).toBe("pollinations");
     } finally {
       await started.server.close();
     }
@@ -223,8 +237,8 @@ describe("Server HTTP surface", () => {
     const publicHarness = makeFullHarness({
       publicUpstreamEnabled: true,
       publicUpstream: {
-        models: () => [MODEL],
-        hasModel: (model) => model === MODEL,
+        models: () => ["opencode/big-pickle"],
+        hasModel: (model) => model === "opencode/big-pickle",
         chatCompletions: async (body) => {
           publicBody = body;
           return new Response('{"id":"public","choices":[{"message":{"role":"assistant","content":"public-ok"}}]}', {
@@ -236,10 +250,10 @@ describe("Server HTTP surface", () => {
     });
     const started = await publicHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
+      const resp = await chatPost(started.base, { model: "opencode/big-pickle", messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
       expect(resp.status).toBe(200);
       expect((await resp.json()).choices[0].message.content).toBe("public-ok");
-      expect(publicBody).toContain(MODEL);
+      expect(publicBody).toContain("opencode/big-pickle");
       expect(publicHarness.chatCalls()).toBe(0);
     } finally {
       await started.server.close();
@@ -257,7 +271,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await publicHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
       expect(resp.status).toBe(200);
       expect(publicHarness.chatCalls()).toBe(1);
     } finally {
@@ -294,7 +308,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await publicHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] }, { Authorization: "Bearer proxy-key" });
       expect(resp.status).toBe(400);
       expect(publicHarness.chatCalls()).toBe(0);
     } finally {
@@ -362,7 +376,7 @@ describe("Server HTTP surface", () => {
       const resp = await fetch(`${started.base}/v1/images/generations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: MODEL, prompt: "a cat" }),
+        body: JSON.stringify({ model: FB_MODEL, prompt: "a cat" }),
       });
       expect(resp.status).toBe(400);
       const body = (await resp.json()) as { error: { code: string } };
@@ -379,7 +393,7 @@ describe("Server HTTP surface", () => {
 
   test("POST /v1/chat/completions proxies and injects the CLI marker", async () => {
     const resp = await chatPost(base, {
-      model: MODEL,
+      model: FB_MODEL,
       messages: [{ role: "user", content: "Reply with exactly: PONG" }],
     });
     expect(resp.status).toBe(200);
@@ -407,7 +421,7 @@ describe("Server HTTP surface", () => {
   test("merges the marker into an existing system message without clobbering it", async () => {
     harness.bodies.length = 0;
     await chatPost(base, {
-      model: MODEL,
+      model: FB_MODEL,
       messages: [
         { role: "system", content: "You are a helpful assistant." },
         { role: "user", content: "hi" },
@@ -423,7 +437,7 @@ describe("Server HTTP surface", () => {
     harness.bodies.length = 0;
     const clientSystem = "You are Buffy, the strategic coding assistant. Custom prompt.";
     await chatPost(base, {
-      model: MODEL,
+      model: FB_MODEL,
       messages: [{ role: "system", content: clientSystem }, { role: "user", content: "hi" }],
     });
     const sent = JSON.parse(harness.bodies[0]) as { messages: { role: string; content: string }[] };
@@ -445,6 +459,15 @@ describe("Server HTTP surface", () => {
     expect(body.error.code).toBe("model_not_found");
   });
 
+  test("rejects bare (unprefixed) registry ids with model_not_found", async () => {
+    // The prefix is mandatory: `deepseek/deepseek-v4-flash` without the
+    // `freebuff/` namespace no longer routes.
+    const resp = await chatPost(base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+    expect(resp.status).toBe(400);
+    const body = (await resp.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("model_not_found");
+  });
+
   test("rejects request bodies larger than the configured limit", async () => {
     const limited = makeFullHarness({ maxBodyBytes: 32 });
     const started = await limited.start();
@@ -452,7 +475,7 @@ describe("Server HTTP surface", () => {
       const resp = await fetch(`${started.base}/v1/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "this body is larger" }] }),
+        body: JSON.stringify({ model: FB_MODEL, messages: [{ role: "user", content: "this body is larger" }] }),
       });
       expect(resp.status).toBe(413);
     } finally {
@@ -491,7 +514,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await streamHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, stream: true, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, stream: true, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(200);
       expect(resp.headers.get("content-type")).toContain("text/event-stream");
       const text = await resp.text();
@@ -512,7 +535,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await retryHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(200);
       expect(retryHarness.chatCalls()).toBe(2);
       expect(retryHarness.invalidations()).toBe(1);
@@ -530,7 +553,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await retryHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(200);
       expect(retryHarness.chatCalls()).toBe(2);
     } finally {
@@ -548,7 +571,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await errHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(429);
       expect(resp.headers.get("retry-after")).toBe("60");
       const body = (await resp.json()) as { error: { code: string; type: string } };
@@ -567,7 +590,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await wrHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(503);
       expect(resp.headers.get("retry-after")).toBe("30");
       const body = (await resp.json()) as { error: { code: string } };
@@ -585,7 +608,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await cdHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(503);
     } finally {
       await started.server.close();
@@ -600,7 +623,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await modelHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(409);
       const body = (await resp.json()) as { error: { code: string; type: string } };
       expect(body.error.code).toBe("model_unavailable");
@@ -623,7 +646,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await modelHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(409);
       const body = (await resp.json()) as { error: { code: string; message: string } };
       expect(body.error.code).toBe("model_locked");
@@ -641,7 +664,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await errHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(503);
       expect(resp.headers.get("retry-after")).toBe("30");
       const body = (await resp.json()) as { error: { message: string; code?: string } };
@@ -660,7 +683,7 @@ describe("Server HTTP surface", () => {
     });
     const started = await errHarness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(429);
       expect(resp.headers.get("retry-after")).toBe("60");
       const body = (await resp.json()) as { error: { message: string } };
@@ -715,7 +738,7 @@ describe("proxy API key auth", () => {
   });
 
   test("still requires the key for /v1/chat/completions", async () => {
-    const resp = await chatPost(base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+    const resp = await chatPost(base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
     expect(resp.status).toBe(401);
   });
 
@@ -739,7 +762,7 @@ describe("web-login API keys (sk-fb-*)", () => {
     try {
       const resp = await chatPost(
         started.base,
-        { model: MODEL, messages: [{ role: "user", content: "hi" }] },
+        { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] },
         { Authorization: "Bearer sk-fb-user-1" },
       );
       expect(resp.status).toBe(200);
@@ -757,7 +780,7 @@ describe("web-login API keys (sk-fb-*)", () => {
     try {
       const resp = await chatPost(
         started.base,
-        { model: MODEL, messages: [{ role: "user", content: "hi" }] },
+        { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] },
         { "x-api-key": "sk-fb-xkey" },
       );
       expect(resp.status).toBe(200);
@@ -771,7 +794,7 @@ describe("web-login API keys (sk-fb-*)", () => {
     const harness = makeFullHarness({ resolveTokenForApiKey: () => undefined });
     const started = await harness.start();
     try {
-      const resp = await chatPost(started.base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+      const resp = await chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] });
       expect(resp.status).toBe(401);
       expect(harness.chatCalls()).toBe(0);
     } finally {

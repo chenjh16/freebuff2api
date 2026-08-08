@@ -32,7 +32,8 @@ process of freebuff2api, including:
 | [06 - E2E Test Records](06-e2e-test-records.md) | Test results and verification conclusions per stage |
 | [07 - Configuration & Usage](07-configuration-and-usage.md) | Env vars, config files, common commands |
 | [08 - Hosted Deployment](08-hosted-deployment.md) | Freebuff hosting: the Next.js app, deploy env vars, endpoint auth |
-| [09 - Model Catalog & Routing](09-model-catalog.md) | Canonical `provider/model` ids, bare aliases, priority routing, image generation |
+| [09 - Model Catalog & Routing](09-model-catalog.md) | Provider-namespaced `provider/model` ids, priority routing, image generation |
+| [10 - Public Upstream Channels](10-public-upstream-channels.md) | Channel inventory & verified quirks, streaming normalization, client compatibility (Cherry Studio fix) |
 
 ## Tools
 
@@ -52,7 +53,7 @@ The helper scripts used during reverse-engineering and verification live in
 ## Verification status
 
 - ✅ `bun run typecheck` (tsc -b --noEmit) passes
-- ✅ 146 unit tests pass (`bun test tests/unit`) covering config, public-upstream
+- ✅ 156 unit tests pass (`bun test tests/unit`) covering config, public-upstream
   safety (aliases, image client, provider priority), models (incl. `freebuff/`
   prefix), runs, session admission (409/503/429 classification), and the server
   surface (incl. `/v1/images/generations`)
@@ -65,8 +66,8 @@ The helper scripts used during reverse-engineering and verification live in
 - ✅ Live public-provider E2E through the proxy (`LIVE_PUBLIC_UPSTREAM_TEST=1`,
   opt-in): every default public model answers — OpenCode (4), Pollinations chat
   (8), Felo (5) via `/v1/chat/completions`, plus Pollinations images (3) via
-  `/v1/images/generations`; `/v1/models` lists canonical ids and bare aliases,
-  and bare aliases route to their owning provider. Provider throttling is
+  `/v1/images/generations`; `/v1/models` lists prefixed ids only, each with its
+  owning provider in `owned_by`. Provider throttling is
   absorbed with backoff retries; Pollinations' anonymous chat tier returns 401
   for some prompt shapes (probes use a benign prompt).
 - ✅ Dual-model re-verification (`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`)

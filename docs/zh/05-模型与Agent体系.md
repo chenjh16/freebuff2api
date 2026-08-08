@@ -112,7 +112,7 @@ freebuff2api 启动时抓取该文件（及其 import 的常量文件），解�
 ```bash
 node tools/model-availability.mjs --help
 node tools/model-availability.mjs --base-url http://127.0.0.1:23333/v1 --concurrency 3
-node tools/model-availability.mjs --models deepseek/deepseek-v4-flash,openai/gpt-5.6-luna --json
+node tools/model-availability.mjs --models freebuff/deepseek/deepseek-v4-flash,freebuff/openai/gpt-5.6-luna --json
 ```
 
 模型探测也有对应的 opt-in 测试：

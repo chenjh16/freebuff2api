@@ -5,8 +5,32 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`/v1/models` 只暴露带供应商前缀的模型 ID，移除所有不带前缀的裸别名**：
+  所有模型现在只有一种拼写——`freebuff/<model>`（如
+  `freebuff/deepseek/deepseek-v4-flash`）、`opencode/<model>`（如
+  `opencode/big-pickle`）、`pollinations/<model>`（如 `pollinations/openai`、
+  `pollinations/flux`）、`felo/<model>`（如 `felo/felo-chat`）。裸（无前缀）ID
+  既不会被 `GET /v1/models` 列出，也不再可路由（返回 `model_not_found`），因此
+  模型 ID 总是标明其供应商；`/v1/models` 的 `owned_by` 按供应商返回
+  （`freebuff2api` / `opencode` / `pollinations` / `felo`）。Freebuff 注册表模型
+  仅在收到 `freebuff/<model>` 时路由，内部再去掉 `freebuff/` 命名空间后以规范
+  注册表 ID 调用上游。已同步更新全部文档、单元测试与端到端测试。
+
 ### Fixed
 
+- **公共上游流式响应兼容严格客户端（Cherry Studio 报
+  `AI_FinishReasonError: Response ended with finish reason "other"`）**：
+  OpenCode Zen 免费层在输出完 `reasoning_content` 后可能直接结束、不发送任何
+  finish chunk，或发出 `"other"` 等非标准 finish reason，Felo 适配器也从不
+  发送 finish chunk；原样透传会让基于 Vercel AI SDK 的客户端（如 Cherry
+  Studio）在思考完成后中止并报错、且看不到（可能为空的）回复。现在公共
+  chat 流在转发前统一规范化（`sanitizeOpenAIStream`）：保证终结
+  `finish_reason: "stop"`（缺失或非标准时重写/补发）、丢弃畸形行与无
+  choices/usage 的垃圾尾随 chunk、始终以唯一 `data: [DONE]` 收尾；Felo SSE
+  同样补发终结 stop chunk。新增 8 个单元测试覆盖截断流、非标准 finish、垃圾
+  chunk、usage 保留等场景，并经真实上游端到端验证。
 - 统一 hosted/standalone 配置文档：明确 hosted Web 登录无需 `AUTH_TOKENS`，并修正 `config.example.json`、CLI 构建命令和 CLI 标记注入模块引用。
 - 只读的 `/healthz` 与 `/v1/models` 路由现在在共享 handler 中严格拒绝非 GET 方法，并补充回归测试。
 - **网页登录 API Key 跨进程/重启失效（`invalid proxy api key` 401）**：

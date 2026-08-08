@@ -19,8 +19,8 @@ and **English** with semantically identical content, under the `zh/` and
 > hosted web console) are at the top of the root [`README.md`](../README.md)
 > — see **What it is** and **Quick start**.
 
-- **中文版**：`zh/` 目录（README + 01~08，含核心的免费模式网关破解分析）
-- **English version**: `en/` directory (README + 01~08, including the core
+- **中文版**：`zh/` 目录（README + 01~10，含核心的免费模式网关破解分析）
+- **English version**: `en/` directory (README + 01~10, including the core
   free-tier CLI gate analysis)
 - 08 托管部署 / Hosted deployment：将本项目部署到 Freebuff 托管
   （`open.freebuff.app`）的完整指南

@@ -8,6 +8,7 @@ import {
   PublicUpstreamRouter,
   createPublicUpstreamRouter,
   isPublicUpstreamFallbackStatus,
+  sanitizeOpenAIStream,
   validatePublicUpstreamURL,
 } from "../../src/public-upstream.ts";
 
@@ -38,37 +39,50 @@ describe("public upstream safety", () => {
     expect(headers.get("content-type")).toBe("application/json");
   });
 
-  test("routes only allowlisted models", () => {
+  test("routes only allowlisted models and rejects bare ids", () => {
     const client = new PublicUpstreamClient({
       baseURL: DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
       models: ["big-pickle"],
       timeoutMs: 2_000,
     });
-    expect(client.hasModel("big-pickle")).toBe(true);
+    expect(client.hasModel("opencode/big-pickle")).toBe(true);
+    // Unprefixed aliases are intentionally not exposed.
+    expect(client.hasModel("big-pickle")).toBe(false);
     expect(client.hasModel("gpt-5.6-luna")).toBe(false);
   });
 
-  test("aggregates canonical ids plus bare aliases across providers", () => {
+  test("aggregates provider-namespaced ids only across providers", () => {
     const router = createPublicUpstreamRouter({
       providers: ["opencode", "pollinations", "felo"],
       models: ["big-pickle", "pollinations/openai", "felo/felo-chat"],
       timeoutMs: 2_000,
     });
     const ids = router.models();
-    expect(ids).toContain("big-pickle");
     expect(ids).toContain("opencode/big-pickle");
     expect(ids).toContain("pollinations/openai");
-    expect(ids).toContain("openai");
     expect(ids).toContain("felo/felo-chat");
-    expect(ids).toContain("felo-chat");
-    // Bare aliases resolve through their owning provider.
+    // No unprefixed forms are advertised.
+    expect(ids).not.toContain("big-pickle");
+    expect(ids).not.toContain("openai");
+    expect(ids).not.toContain("felo-chat");
+    // Prefixed ids resolve through their owning provider; bare ids do not.
     expect(router.hasModel("pollinations/openai")).toBe(true);
-    expect(router.hasModel("openai")).toBe(true);
+    expect(router.hasModel("openai")).toBe(false);
     expect(router.hasModel("felo/felo-chat")).toBe(true);
-    expect(router.hasModel("felo-chat")).toBe(true);
+    expect(router.hasModel("felo-chat")).toBe(false);
     expect(router.hasModel("opencode/big-pickle")).toBe(true);
     expect(router.hasModel("pollinations/claude")).toBe(false);
     expect(router.hasModel("gpt-5.6-luna")).toBe(false);
+  });
+
+  test("accepts bare OpenCode ids in the allowlist config for compatibility", () => {
+    const router = createPublicUpstreamRouter({
+      providers: ["opencode"],
+      models: ["big-pickle"],
+      timeoutMs: 2_000,
+    });
+    expect(router.models()).toEqual(["opencode/big-pickle"]);
+    expect(router.hasModel("opencode/big-pickle")).toBe(true);
   });
 
   test("opencode strips its prefix before forwarding", async () => {
@@ -129,16 +143,20 @@ describe("public upstream safety", () => {
       },
     });
     const response = await client.chatCompletions(JSON.stringify({ model: "felo/felo-chat", stream: true, messages: [{ role: "user", content: "hi" }] }));
-    expect(await response.text()).toContain("final answer");
+    const text = await response.text();
+    expect(text).toContain("final answer");
+    // Felo's web protocol has no finish chunk; the adapter must emit a
+    // terminal stop before [DONE] or strict clients abort with "other".
+    expect(text).toContain('"finish_reason":"stop"');
+    expect(text.trimEnd().endsWith("data: [DONE]"));
   });
 
-  test("Felo exposes canonical ids and bare aliases without credentials", () => {
+  test("Felo exposes provider-namespaced ids only without credentials", () => {
     const client = new FeloPublicUpstreamClient({ models: ["felo/felo-chat"], timeoutMs: 2_000 });
     expect(client.hasModel("felo/felo-chat")).toBe(true);
-    expect(client.hasModel("felo-chat")).toBe(true);
+    expect(client.hasModel("felo-chat")).toBe(false);
     expect(client.hasModel("felo/felo-search")).toBe(false);
-    expect(client.models()).toContain("felo/felo-chat");
-    expect(client.models()).toContain("felo-chat");
+    expect(client.models()).toEqual(["felo/felo-chat"]);
   });
 
   test("Pollinations image client builds the anonymous URL and embeds base64", async () => {
@@ -171,7 +189,7 @@ describe("public upstream safety", () => {
     expect(captured).not.toContain("nologo");
   });
 
-  test("Pollinations image client accepts the bare alias and honors n/seed offsets", async () => {
+  test("Pollinations image client honors n/seed offsets with prefixed ids and rejects bare ids", async () => {
     const calls: string[] = [];
     const client = new PollinationsImageClient({
       models: ["pollinations/flux"],
@@ -182,7 +200,7 @@ describe("public upstream safety", () => {
       },
     });
     const response = await client.imageGenerations(
-      JSON.stringify({ model: "flux", prompt: "cat", n: 2, seed: 10, response_format: "b64_json" }),
+      JSON.stringify({ model: "pollinations/flux", prompt: "cat", n: 2, seed: 10, response_format: "b64_json" }),
     );
     expect(response.status).toBe(200);
     expect(calls).toHaveLength(2);
@@ -192,6 +210,9 @@ describe("public upstream safety", () => {
     expect(body.data).toHaveLength(2);
     expect(body.data[0].b64_json).toBe(Buffer.from([1]).toString("base64"));
     expect(body.data[0].url).toBeUndefined();
+    // The unprefixed alias is no longer a valid model id.
+    const rejected = await client.imageGenerations(JSON.stringify({ model: "flux", prompt: "cat" }));
+    expect(rejected.status).toBe(400);
   });
 
   test("Pollinations image client rejects bad input", async () => {
@@ -213,9 +234,8 @@ describe("public upstream safety", () => {
       imageModels: ["pollinations/flux", "pollinations/turbo"],
       timeoutMs: 2_000,
     });
-    expect(router.imageModels()).toContain("pollinations/flux");
-    expect(router.imageModels()).toContain("flux");
-    expect(router.hasImageModel("flux")).toBe(true);
+    expect(router.imageModels()).toEqual(["pollinations/flux", "pollinations/turbo"]);
+    expect(router.hasImageModel("flux")).toBe(false);
     expect(router.hasImageModel("pollinations/flux")).toBe(true);
     expect(router.hasImageModel("pollinations/openai")).toBe(false);
     // Image generation with a mocked image fetch.
@@ -241,7 +261,8 @@ describe("public upstream safety", () => {
       timeoutMs: 2_000,
     });
     expect(router.hasModel("pollinations/openai")).toBe(true);
-    expect(router.hasModel("openai")).toBe(true);
+    // Unprefixed aliases are not routable.
+    expect(router.hasModel("openai")).toBe(false);
     expect(router.hasModel("pollinations/claude")).toBe(false);
     expect(router.hasModel("claude")).toBe(false);
   });
@@ -252,5 +273,141 @@ describe("public upstream safety", () => {
     expect(isPublicUpstreamFallbackStatus(503)).toBe(true);
     expect(isPublicUpstreamFallbackStatus(400)).toBe(false);
     expect(isPublicUpstreamFallbackStatus(404)).toBe(false);
+  });
+});
+
+function sseResponse(raw: string): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(raw));
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+function sseDataLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+}
+
+function parseFinishReasons(text: string): string[] {
+  const reasons: string[] = [];
+  for (const line of sseDataLines(text)) {
+    if (line === "[DONE]") continue;
+    try {
+      const chunk = JSON.parse(line) as { choices?: { finish_reason?: string | null }[] };
+      const reason = chunk.choices?.[0]?.finish_reason;
+      if (reason) reasons.push(reason);
+    } catch {
+      // ignore
+    }
+  }
+  return reasons;
+}
+
+describe("sanitizeOpenAIStream", () => {
+  test("synthesizes a terminal stop when the upstream ends without a finish chunk", async () => {
+    // OpenCode free-tier truncation: reasoning deltas, then [DONE] with no
+    // finish_reason anywhere. Strict clients would synthesize "other" here.
+    const response = sanitizeOpenAIStream(sseResponse(
+      `data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"deepseek-v4-flash-free","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}\n\n` +
+      `data: [DONE]\n\n`,
+    ));
+    const text = await response.text();
+    const lines = sseDataLines(text);
+    expect(lines[lines.length - 1]).toBe("[DONE]");
+    const terminal = JSON.parse(lines[lines.length - 2]) as {
+      choices: { index: number; delta: Record<string, unknown>; finish_reason: string }[];
+    };
+    expect(terminal.choices[0].finish_reason).toBe("stop");
+    // Reasoning delta is preserved verbatim.
+    expect(lines[0]).toContain("reasoning_content");
+  });
+
+  test("rewrites a non-standard finish reason to stop", async () => {
+    const response = sanitizeOpenAIStream(sseResponse(
+      `data: {"id":"x","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"other"}]}\n\n` +
+      `data: [DONE]\n\n`,
+    ));
+    const text = await response.text();
+    expect(parseFinishReasons(text)).toEqual(["stop"]);
+    expect(text).toContain('"content":"hi"');
+    expect(text).not.toContain('"other"');
+  });
+
+  test("drops junk trailing chunks without choices or usage", async () => {
+    const response = sanitizeOpenAIStream(sseResponse(
+      `data: {"id":"x","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n` +
+      `data: {"choices":[],"cost":"0"}\n\n` +
+      `data: [DONE]\n\n`,
+    ));
+    const text = await response.text();
+    const lines = sseDataLines(text);
+    expect(text).not.toContain("cost");
+    const chunks = lines.filter((line) => line !== "[DONE]");
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toContain('"content":"hi"');
+    expect(lines[lines.length - 1]).toBe("[DONE]");
+  });
+
+  test("keeps usage chunks and appends the terminal stop after them", async () => {
+    const response = sanitizeOpenAIStream(sseResponse(
+      `data: {"id":"x","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n` +
+      `data: {"id":"x","choices":[],"usage":{"prompt_tokens":84}}\n\n` +
+      `data: [DONE]\n\n`,
+    ));
+    const text = await response.text();
+    const lines = sseDataLines(text);
+    expect(lines.some((line) => line.includes("usage"))).toBe(true);
+    expect(lines[lines.length - 1]).toBe("[DONE]");
+    expect(lines[lines.length - 2]).toContain("prompt_tokens");
+  });
+
+  test("drops malformed data lines", async () => {
+    const response = sanitizeOpenAIStream(sseResponse(
+      `data: {not json\n\n` +
+      `data: {"id":"x","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n` +
+      `data: [DONE]\n\n`,
+    ));
+    const text = await response.text();
+    expect(text).not.toContain("not json");
+    expect(text).toContain('"content":"hi"');
+  });
+
+  test("leaves a well-formed stream untouched apart from chunk framing", async () => {
+    const response = sanitizeOpenAIStream(sseResponse(
+      `data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n` +
+      `data: {"id":"x","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n` +
+      `data: [DONE]\n\n`,
+    ));
+    const text = await response.text();
+    expect(parseFinishReasons(text)).toEqual(["stop"]);
+    const lines = sseDataLines(text);
+    expect(lines[lines.length - 1]).toBe("[DONE]");
+    expect(lines[0]).toContain('"content":"Hello"');
+  });
+
+  test("passes non-stream JSON responses through unchanged", async () => {
+    const body = JSON.stringify({ choices: [{ message: { role: "assistant", content: "hi" }, finish_reason: "stop" }] });
+    const response = sanitizeOpenAIStream(new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }));
+    expect(await response.text()).toBe(body);
+  });
+
+  test("PublicUpstreamClient sanitizes SSE responses from the wire", async () => {
+    const client = new PublicUpstreamClient({
+      baseURL: DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
+      models: ["big-pickle"],
+      timeoutMs: 2_000,
+      fetchFn: async () => sseResponse(`data: {"id":"x","choices":[{"index":0,"delta":{"reasoning_content":"r"},"finish_reason":null}]}\n\ndata: [DONE]\n\n`),
+    });
+    const response = await client.chatCompletions(JSON.stringify({ model: "big-pickle", stream: true, messages: [{ role: "user", content: "hi" }] }));
+    const text = await response.text();
+    const lines = sseDataLines(text);
+    expect(JSON.parse(lines[lines.length - 2]).choices[0].finish_reason).toBe("stop");
+    expect(lines[lines.length - 1]).toBe("[DONE]");
   });
 });

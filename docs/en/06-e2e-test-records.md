@@ -61,7 +61,7 @@ DEBUG_UPSTREAM=1 LISTEN_ADDR=:18080 bun run src/index.ts
 ```bash
 curl -sN http://127.0.0.1:18080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","stream":true,"messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
 ```
 
 Result: ✅ HTTP 200, SSE pushes:
@@ -76,7 +76,7 @@ data: {"id":"93390497-…","object":"chat.completion.chunk","model":"deepseek/de
 ```bash
 curl -s http://127.0.0.1:18080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Reply with exactly: PONG"}]}'
 ```
 
 Result: ✅ HTTP 200, real answer:
@@ -135,7 +135,7 @@ tmux new-session -d -s fba 'cd <repo> && LISTEN_ADDR=:18080 bun run src/index.ts
 # 2. Configure opencode (~/.config/opencode/config.json):
 #    provider.freebuff = { npm: "@ai-sdk/openai-compatible",
 #      options: { baseURL: "http://127.0.0.1:18080/v1", apiKey: "local" },
-#      models: { "deepseek/deepseek-v4-flash": {} } }
+#      models: { "freebuff/deepseek/deepseek-v4-flash": {} } }
 
 # 3. Run
 cd tests/agentic/cases/opencode-demo
@@ -292,7 +292,7 @@ explicit opt-in configuration.
 | Check | Result |
 | ---- | ---- |
 | CLI startup without `AUTH_TOKENS` | ✅ ready on `/healthz` |
-| `GET /v1/models` | ✅ HTTP 200 and includes `big-pickle` |
+| `GET /v1/models` | ✅ HTTP 200 and includes `opencode/big-pickle` |
 | `POST /v1/chat/completions` | ✅ HTTP 200 through OpenCode Zen; response matched `NOAUTH_DEFAULT_PROXY_OK` |
 | Command | `LIVE_PUBLIC_UPSTREAM_TEST=1 bun test ./tests/e2e/public-upstream.e2e.test.ts --timeout 120000` |
 

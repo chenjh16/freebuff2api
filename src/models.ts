@@ -89,29 +89,39 @@ export class ModelRegistry {
   }
 
   models(): string[] {
-    return [...this.allModels];
+    // The catalog exposes the Freebuff namespace only: every registry id is
+    // listed as `freebuff/<model>`. Bare registry ids stay internal — they are
+    // exactly what the upstream session/run/chat APIs expect — and are never
+    // advertised or routable at the proxy surface.
+    return [...this.allModels].map((model) => `freebuff/${model}`).sort();
   }
 
   hasModel(model: string): boolean {
-    return this.modelToAgent.has(this.unprefix(model));
-  }
-
-  agentForModel(model: string): string | undefined {
-    return this.modelToAgent.get(this.unprefix(model));
+    return this.agentForModel(model) !== undefined;
   }
 
   /**
-   * Resolve a possibly prefixed id (`freebuff/<model>`) to its bare registry id
-   * that the upstream session/run APIs expect.
+   * Only `freebuff/<model>` ids route here; bare registry ids are rejected so
+   * every model id at the proxy surface names its provider explicitly.
+   */
+  agentForModel(model: string): string | undefined {
+    if (!model.startsWith("freebuff/")) return undefined;
+    return this.modelToAgent.get(model.slice("freebuff/".length));
+  }
+
+  /**
+   * Resolve a `freebuff/<model>` id to the bare registry id the upstream
+   * session/run APIs expect (e.g. `deepseek/deepseek-v4-flash`).
    */
   canonicalModel(model: string): string {
     return this.unprefix(model);
   }
 
   /**
-   * Freebuff models are addressed as `freebuff/<model>` or by their bare id.
-   * Registry ids may themselves contain slashes (e.g. `deepseek/deepseek-v4-flash`),
-   * so only the exact `freebuff/` namespace is stripped.
+   * Freebuff models are addressed only as `freebuff/<model>` at the proxy
+   * surface. Registry ids may themselves contain slashes (e.g.
+   * `deepseek/deepseek-v4-flash`), so only the exact `freebuff/` namespace is
+   * stripped.
    */
   private unprefix(model: string): string {
     return model.startsWith("freebuff/") ? model.slice("freebuff/".length) : model;

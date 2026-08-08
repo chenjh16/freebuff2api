@@ -18,7 +18,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const MODEL = "deepseek/deepseek-v4-flash";
+// The proxy surface accepts only the provider-namespaced id.
+const MODEL = "freebuff/deepseek/deepseek-v4-flash";
 
 function hasCredentials(): boolean {
   const path = join(homedir(), ".config", "freebuff2api", "credentials.json");

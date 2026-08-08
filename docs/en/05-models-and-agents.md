@@ -120,7 +120,7 @@ and can consume quota:
 ```bash
 node tools/model-availability.mjs --help
 node tools/model-availability.mjs --base-url http://127.0.0.1:23333/v1 --concurrency 3
-node tools/model-availability.mjs --models deepseek/deepseek-v4-flash,openai/gpt-5.6-luna --json
+node tools/model-availability.mjs --models freebuff/deepseek/deepseek-v4-flash,freebuff/openai/gpt-5.6-luna --json
 ```
 
 There is also an opt-in automated probe:

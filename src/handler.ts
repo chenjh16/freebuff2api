@@ -142,29 +142,32 @@ function healthz(deps: HandlerDeps, startedAt: number): Response {
 
 function models(deps: HandlerDeps, startedAt: number): Response {
   const created = Math.floor(startedAt / 1000);
+  // Every advertised model id is provider-namespaced: the Freebuff registry is
+  // listed as `freebuff/<model>` and the public channels as `provider/<model>`
+  // (e.g. `opencode/deepseek-v4-flash-free`, `pollinations/flux`). Bare
+  // (unprefixed) aliases are intentionally neither listed nor routable — a
+  // model id always names its provider explicitly.
   const registryModels = deps.registry.models();
-  // Canonical model ids are namespaced by provider; every model is also
-  // reachable through its bare alias. Freebuff models are always listed;
-  // public chat/image models only when the public route is enabled.
   const publicChatIds = deps.cfg.publicUpstreamEnabled
     ? (deps.publicUpstream?.models() ?? deps.cfg.publicUpstreamModels)
     : [];
   const publicImageIds = deps.cfg.publicUpstreamEnabled ? (deps.publicUpstream?.imageModels() ?? []) : [];
-  const modelIds = [...new Set([
-    ...registryModels,
-    ...registryModels.map((model) => `freebuff/${model}`),
-    ...publicChatIds,
-    ...publicImageIds,
-  ])].sort();
+  const modelIds = [...new Set([...registryModels, ...publicChatIds, ...publicImageIds])].sort();
   const list = modelIds.map((model) => ({
     id: model,
     object: "model",
     created,
-    owned_by: "freebuff2api",
+    owned_by: ownedByOf(model),
     root: model,
     permission: [],
   }));
   return json(200, { object: "list", data: list });
+}
+
+/** The provider that owns a namespaced model id (OpenAI `owned_by` field). */
+function ownedByOf(model: string): string {
+  const provider = model.slice(0, model.indexOf("/"));
+  return provider === "freebuff" ? "freebuff2api" : provider;
 }
 
 async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Response> {
@@ -239,7 +242,7 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
     return publicFallbackResponse ?? openAIError(400, `unsupported model "${requestedModel}"`, "invalid_request_error", "model_not_found");
   }
   // The authenticated Freebuff path always talks in bare registry ids: a
-  // `freebuff/<model>` alias must be normalized before session/run/chat calls
+  // `freebuff/<model>` id must be normalized before session/run/chat calls
   // or the upstream reports a model mismatch.
   const freebuffModel = deps.registry.canonicalModel(requestedModel);
   // A web-login key resolves to the account token that should serve this

@@ -25,20 +25,22 @@ image generation), and Felo's reverse-engineered web protocol.
 
 ### Model id scheme
 
-Every model id has a canonical `provider/model` form and a bare alias:
+Every model id is provider-namespaced (`freebuff/…`, `opencode/…`,
+`pollinations/…`, `felo/…`); unprefixed ids are neither listed by
+`GET /v1/models` nor routable, so a model id always names its provider.
 
-| Provider | Canonical | Bare alias |
+| Provider | Model id form | Example |
 | ---- | ---- | ---- |
-| Freebuff | `freebuff/<model>` (e.g. `freebuff/deepseek/deepseek-v4-flash`) | `<model>` (e.g. `deepseek/deepseek-v4-flash`) |
-| OpenCode | `opencode/big-pickle` | `big-pickle` |
-| Pollinations chat | `pollinations/openai` | `openai` |
-| Pollinations image | `pollinations/flux` | `flux` |
-| Felo | `felo/felo-chat` | `felo-chat` |
+| Freebuff | `freebuff/<model>` | `freebuff/deepseek/deepseek-v4-flash` |
+| OpenCode | `opencode/<model>` | `opencode/big-pickle` |
+| Pollinations chat | `pollinations/<model>` | `pollinations/openai` |
+| Pollinations image | `pollinations/<model>` | `pollinations/flux` |
+| Felo | `felo/<model>` | `felo/felo-chat` |
 
-Bare aliases are deduplicated and route by `PUBLIC_UPSTREAM_PROVIDERS` priority
-(`opencode` → `pollinations` → `felo`, Freebuff last), so a bare id that exists
-in several providers prefers the first configured public one and falls back
-through the rest before the authenticated Freebuff path.
+Public routes are matched by these prefixed ids; on transient failure the
+request falls through the remaining matching public providers in
+`PUBLIC_UPSTREAM_PROVIDERS` order (`opencode` → `pollinations` → `felo`) before
+the authenticated Freebuff path.
 
 `PUBLIC_UPSTREAM_BASE_URL` may override only an HTTPS `opencode.ai` URL;
 Pollinations (`https://gen.pollinations.ai/v1`, chat; `https://image.pollinations.ai`,
@@ -225,6 +227,15 @@ Response characteristics:
 - `Content-Type: text/event-stream` (streaming) or `application/json`
 - `reasoning_content`: DeepSeek-family models return their reasoning process
 - `provider: "DeepSeek"` etc.
+
+Public upstream streams are normalized before relay: a terminal
+`finish_reason: "stop"` chunk is guaranteed (rewritten or synthesized when the
+upstream ends without one or emits a non-standard reason such as `"other"`),
+junk trailing chunks are dropped, and the stream always ends with a single
+`data: [DONE]` — so strict clients like Cherry Studio's AI SDK never hit
+`finish reason "other"` (`AI_FinishReasonError`). See
+[10 - Public Upstream Channels](10-public-upstream-channels.md) for the channel
+inventory, verified provider quirks, and troubleshooting.
 
 ## 4. Misc
 

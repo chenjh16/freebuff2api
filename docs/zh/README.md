@@ -11,7 +11,7 @@
 - 官方 Freebuff CLI（[CodebuffAI/freebuff](https://github.com/CodebuffAI/freebuff)）的登录流程
 - 上游 API 的完整协议（会话、Agent 运行、Chat Completions）
 - 默认开启的 OpenCode、Pollinations、Felo 固定公共上游聚合、`provider/model`
-  前缀规范 ID 与裸别名、凭证隔离、回退规则与隐私边界
+  前缀规范 ID（无裸别名）、凭证隔离、回退规则与隐私边界
 - **核心发现**：免费模式 CLI 网关的检查机制（`free_mode_cli_required`）
 - 模型与 Agent 体系
 - 端到端测试记录
@@ -29,7 +29,8 @@
 | [06-端到端测试记录](06-端到端测试记录.md) | 各阶段测试结果与验证结论 |
 | [07-配置与使用](07-配置与使用.md) | 环境变量、配置文件、常用命令 |
 | [08-托管部署](08-托管部署.md) | Freebuff 托管：Next.js 应用、部署环境变量、端点鉴权 |
-| [09-模型目录](09-模型目录.md) | 统一模型目录：前缀规范 ID、裸别名、优先级路由与图片生成 |
+| [09-模型目录](09-模型目录.md) | 统一模型目录：前缀规范 ID（无裸别名）、优先级路由与图片生成 |
+| [10-公共上游渠道](10-公共上游渠道.md) | 渠道清单与实测行为、流式规范化、客户端兼容性（Cherry Studio 修复） |
 
 ## 工具目录
 
@@ -48,8 +49,8 @@
 ## 验证状态
 
 - ✅ `bun run typecheck`（tsc -b --noEmit）通过
-- ✅ 146 个单元测试通过（`bun test tests/unit`），覆盖配置、公共上游安全
-  （裸别名、图片客户端、供应商优先级）、模型注册表（含 `freebuff/` 前缀）、
+- ✅ 156 个单元测试通过（`bun test tests/unit`），覆盖配置、公共上游安全
+  （前缀路由、图片客户端、供应商优先级）、模型注册表（含 `freebuff/` 前缀）、
   run 管理、会话准入（409/503/429 分类）与服务器接口（含
   `/v1/images/generations`）
 - ✅ 真实账号登录（device-code 流程）
@@ -62,7 +63,8 @@
   普通测试依赖外部网络）：全部默认公共模型经代理验证——OpenCode chat（4）、
   Pollinations chat（8）、Felo chat（5）走 `/v1/chat/completions`，
   Pollinations 图片（3）走 `/v1/images/generations`；`/v1/models` 列出
-  规范 ID 与裸别名，裸别名正确路由到所属供应商。供应商限流通过退避重试
+  前缀 ID（无裸别名），每个 ID 在 `owned_by` 中标注所属供应商。供应商限流
+  通过退避重试
   吸收；Pollinations 匿名 chat 对部分提示词形态返回 401（探针使用良性提示词）
 - ✅ 双模型复测（`openai/gpt-5.6-luna` + `deepseek/deepseek-v4-flash`）：
   经代理与官方 CLI（MITM 抓包）全链路通过——见

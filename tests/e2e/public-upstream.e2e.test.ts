@@ -2,10 +2,10 @@
  * Live E2E coverage for the aggregated public (no-auth) upstreams.
  *
  * Starts the real proxy without AUTH_TOKENS and verifies, through the proxy:
- *   - the /v1/models catalog (canonical ids + bare aliases)
+ *   - the /v1/models catalog (provider-namespaced ids only)
  *   - every public chat model answers /v1/chat/completions
  *   - every public image model answers /v1/images/generations
- *   - bare aliases route to their owning provider
+ *   - unprefixed model ids are rejected with model_not_found
  *
  * Run explicitly because it makes many real external requests. The sweep is
  * split into provider groups so each group fits comfortably in a runner
@@ -36,7 +36,7 @@ import {
 } from "../../src/public-upstream.ts";
 
 const enabled = process.env.LIVE_PUBLIC_UPSTREAM_TEST === "1";
-const OPENCODE_MODELS = [...DEFAULT_OPENCODE_MODELS];
+const OPENCODE_MODELS = DEFAULT_OPENCODE_MODELS.map((model) => `opencode/${model}`);
 const POLLINATIONS_MODELS = DEFAULT_POLLINATIONS_MODELS.map((model) => `pollinations/${model}`);
 const FELO_MODELS = DEFAULT_FELO_MODELS.map((model) => `felo/${model}`);
 const IMAGE_MODELS = DEFAULT_POLLINATIONS_IMAGE_MODELS.map((model) => `pollinations/${model}`);
@@ -205,7 +205,7 @@ function expectNoFailures(results: { model: string; ok: boolean; detail: string 
 }
 
 describe.skipIf(!enabled)("aggregated public upstreams (live)", () => {
-  test("catalog lists canonical ids and bare aliases from /v1/models", async () => {
+  test("catalog lists provider-namespaced ids only from /v1/models", async () => {
     const modelsResponse = await fetch(`${baseURL}/v1/models`);
     expect(modelsResponse.status).toBe(200);
     const models = (await modelsResponse.json()) as { data: { id: string }[] };
@@ -215,10 +215,14 @@ describe.skipIf(!enabled)("aggregated public upstreams (live)", () => {
       expect(ids).toContain(model);
     }
     expect(ids).toContain("opencode/big-pickle");
-    expect(ids).toContain("openai");
-    expect(ids).toContain("felo-chat");
-    expect(ids).toContain("flux");
+    expect(ids).toContain("pollinations/openai");
+    expect(ids).toContain("felo/felo-chat");
     expect(ids).toContain("pollinations/flux");
+    // No unprefixed forms are advertised.
+    expect(ids).not.toContain("big-pickle");
+    expect(ids).not.toContain("openai");
+    expect(ids).not.toContain("felo-chat");
+    expect(ids).not.toContain("flux");
   });
 
   test("opencode chat models answer through the proxy", async () => {
@@ -233,8 +237,18 @@ describe.skipIf(!enabled)("aggregated public upstreams (live)", () => {
     expectNoFailures(await probeSequentially(FELO_MODELS, probeChat));
   });
 
-  test("bare aliases route to their owning public provider", async () => {
-    expectNoFailures(await probeSequentially(["big-pickle", "openai", "felo-chat"], probeChat));
+  test("unprefixed ids are rejected with model_not_found", async () => {
+    for (const bare of ["big-pickle", "openai", "felo-chat", "flux"]) {
+      const response = await fetch(`${baseURL}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: bare, messages: [{ role: "user", content: "hi" }] }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      expect(response.status, `bare id ${bare}`).toBe(400);
+      const body = (await response.json()) as { error?: { code?: string } };
+      expect(body.error?.code, `bare id ${bare}`).toBe("model_not_found");
+    }
   });
 
   test("pollinations image models generate a base64 image through /v1/images/generations", async () => {

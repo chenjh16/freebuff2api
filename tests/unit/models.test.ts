@@ -55,16 +55,22 @@ describe("ModelRegistry", () => {
     );
     await registry.start();
     expect(registry.status().source).toBe("fallback");
-    expect(registry.hasModel("deepseek/deepseek-v4-flash")).toBe(true);
+    // The proxy surface only accepts `freebuff/<model>` ids.
+    expect(registry.hasModel("freebuff/deepseek/deepseek-v4-flash")).toBe(true);
+    expect(registry.hasModel("deepseek/deepseek-v4-flash")).toBe(false);
     // Most-specific free agent wins over the aggregate base2-free.
-    expect(registry.agentForModel("deepseek/deepseek-v4-flash")).toBe("base2-free-deepseek-flash");
-    expect(registry.agentForModel("deepseek/deepseek-v4-pro")).toBe("base2-free-deepseek");
-    expect(registry.agentForModel("openai/gpt-5.6-luna")).toBe("base2-free-luna");
-    expect(registry.agentForModel("minimax/minimax-m3")).toBe("base2-free-minimax-m3");
-    expect(registry.agentForModel("z-ai/glm-5.2")).toBe("base2-free-glm");
-    expect(registry.agentForModel("google/gemini-3.5-flash-lite")).toBe("file-picker-max");
+    expect(registry.agentForModel("freebuff/deepseek/deepseek-v4-flash")).toBe("base2-free-deepseek-flash");
+    expect(registry.agentForModel("freebuff/deepseek/deepseek-v4-pro")).toBe("base2-free-deepseek");
+    expect(registry.agentForModel("freebuff/openai/gpt-5.6-luna")).toBe("base2-free-luna");
+    expect(registry.agentForModel("freebuff/minimax/minimax-m3")).toBe("base2-free-minimax-m3");
+    expect(registry.agentForModel("freebuff/z-ai/glm-5.2")).toBe("base2-free-glm");
+    expect(registry.agentForModel("freebuff/google/gemini-3.5-flash-lite")).toBe("file-picker-max");
+    expect(registry.agentForModel("deepseek/deepseek-v4-flash")).toBeUndefined();
     expect(registry.agentIds().length).toBeGreaterThan(10);
+    // The catalog lists the Freebuff namespace only.
     expect(registry.models().length).toBeGreaterThan(5);
+    expect(registry.models()).toContain("freebuff/deepseek/deepseek-v4-flash");
+    expect(registry.models()).not.toContain("deepseek/deepseek-v4-flash");
     registry.stop();
   });
 
@@ -74,8 +80,8 @@ describe("ModelRegistry", () => {
     const registry = new ModelRegistry(fetchFn, () => {});
     await registry.start();
     expect(registry.status().source).toBe("remote");
-    expect(registry.agentForModel("deepseek/deepseek-v4-flash")).toBe("agent-b");
-    expect(registry.agentForModel("openai/gpt-5.6-luna")).toBe("agent-a");
+    expect(registry.agentForModel("freebuff/deepseek/deepseek-v4-flash")).toBe("agent-b");
+    expect(registry.agentForModel("freebuff/openai/gpt-5.6-luna")).toBe("agent-a");
     registry.stop();
   });
 
@@ -84,7 +90,7 @@ describe("ModelRegistry", () => {
     const registry = new ModelRegistry(fetchFn, () => {});
     await registry.start();
     expect(registry.status().source).toBe("fallback");
-    expect(registry.hasModel("deepseek/deepseek-v4-flash")).toBe(true);
+    expect(registry.hasModel("freebuff/deepseek/deepseek-v4-flash")).toBe(true);
     registry.stop();
   });
 
@@ -96,7 +102,7 @@ describe("ModelRegistry", () => {
     expect(registry.models()).toEqual([]);
   });
 
-  test("accepts the freebuff/ namespace prefix and canonicalizes it", async () => {
+  test("freebuff/-prefixed ids canonicalize; bare ids are rejected", async () => {
     const registry = new ModelRegistry(
       async () => {
         throw new Error("network offline");
@@ -107,7 +113,10 @@ describe("ModelRegistry", () => {
     expect(registry.hasModel(`freebuff/deepseek/deepseek-v4-flash`)).toBe(true);
     expect(registry.agentForModel(`freebuff/deepseek/deepseek-v4-flash`)).toBe("base2-free-deepseek-flash");
     expect(registry.canonicalModel(`freebuff/deepseek/deepseek-v4-flash`)).toBe("deepseek/deepseek-v4-flash");
-    expect(registry.canonicalModel("deepseek/deepseek-v4-flash")).toBe("deepseek/deepseek-v4-flash");
+    // Bare registry ids no longer route: the prefix is mandatory at the proxy
+    // surface, even though the id already contains a model-vendor namespace.
+    expect(registry.hasModel("deepseek/deepseek-v4-flash")).toBe(false);
+    expect(registry.agentForModel("deepseek/deepseek-v4-flash")).toBeUndefined();
     // A registry id that merely starts with another namespace is untouched.
     expect(registry.hasModel(`freebuff/z-ai/glm-5.2`)).toBe(true);
     expect(registry.agentForModel(`freebuff/z-ai/glm-5.2`)).toBe("base2-free-glm");

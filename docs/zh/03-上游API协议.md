@@ -17,11 +17,11 @@
 ## 固定公共/免认证上游
 
 代理同时提供认证 Freebuff 链路与默认开启的三个固定公共链路：OpenCode Zen、免
-key 的 Pollinations，以及 Felo 逆向网页协议。所有模型都同时暴露两种 ID：
-`provider/model` 前缀规范 ID（`freebuff/`、`opencode/`、`pollinations/`、
-`felo/`）与去掉前缀的裸别名；裸别名全局去重，当多个供应商拥有同名裸别名时按
-`PUBLIC_UPSTREAM_PROVIDERS` 的优先级顺序路由（公共优先，最后才回退
-Freebuff）。`PUBLIC_UPSTREAM_BASE_URL` 只允许覆盖 HTTPS 的 `opencode.ai`；
+key 的 Pollinations，以及 Felo 逆向网页协议。模型 ID 一律使用 `provider/model`
+前缀规范形式（`freebuff/`、`opencode/`、`pollinations/`、`felo/`），不带前缀
+的裸 ID 不会被列出也不可路由，因此模型 ID 总是标明其供应商。请求匹配到多个
+公共 provider 时，按 `PUBLIC_UPSTREAM_PROVIDERS` 的优先级顺序尝试与回退
+（公共优先，最后才回退 Freebuff）。`PUBLIC_UPSTREAM_BASE_URL` 只允许覆盖 HTTPS 的 `opencode.ai`；
 Pollinations（`https://gen.pollinations.ai/v1`）与 Felo（`https://felo.ai`）
 地址固定。`PUBLIC_UPSTREAM_PROVIDERS`、`PUBLIC_UPSTREAM_MODELS` 与
 `PUBLIC_UPSTREAM_IMAGE_MODELS` 可缩小白名单，`PUBLIC_UPSTREAM_ENABLED=false`
@@ -199,6 +199,12 @@ Accept: */*
 - `Content-Type: text/event-stream`（流式）或 `application/json`
 - `reasoning_content`：DeepSeek 系列返回思考过程
 - `provider: "DeepSeek"` 等标识
+
+公共上游流在转发前会做规范化：保证终结 `finish_reason: "stop"`（上游未发
+或发出 `"other"` 等非标准 reason 时重写/补发），丢弃垃圾尾随 chunk，并始终
+以唯一的 `data: [DONE]` 收尾——严格客户端（如 Cherry Studio 的 AI SDK）不会
+再遇到 `finish reason "other"`（`AI_FinishReasonError`）。渠道清单、实测的
+供应商行为与排查方法见 [10-公共上游渠道](10-公共上游渠道.md)。
 
 ## 4. 其他
 

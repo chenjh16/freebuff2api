@@ -22,7 +22,7 @@ bun run dev:cli    # standalone proxy; `bun run dev` is the hosted Next.js app
 curl http://localhost:23333/v1/models
 curl http://localhost:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"freebuff/deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 Point any OpenAI-compatible client at `http://localhost:23333/v1`.
@@ -73,7 +73,7 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 ## Public anonymous provider
 
-The proxy aggregates four explicitly fixed capabilities before the authenticated Freebuff session path: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id has a canonical `provider/model` form plus a bare alias without the prefix (`opencode/big-pickle` ↔ `big-pickle`, `pollinations/openai` ↔ `openai`, `felo/felo-chat` ↔ `felo-chat`; Freebuff models are `freebuff/<model>` ↔ bare id). Bare aliases are deduplicated and route by `PUBLIC_UPSTREAM_PROVIDERS` priority, with Freebuff last. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes, or narrow the provider/model lists. `PUBLIC_UPSTREAM_BASE_URL` is restricted to `opencode.ai` and never changes the fixed Pollinations/Felo destinations.
+The proxy aggregates four explicitly fixed capabilities before the authenticated Freebuff session path: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id is provider-namespaced (`opencode/big-pickle`, `pollinations/openai`, `felo/felo-chat`; Freebuff models are `freebuff/<model>`); unprefixed ids are neither listed nor routable. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes, or narrow the provider/model lists. `PUBLIC_UPSTREAM_BASE_URL` is restricted to `opencode.ai` and never changes the fixed Pollinations/Felo destinations.
 
 `POST /v1/images/generations` serves the allowlisted image models through `image.pollinations.ai` (anonymous GET). It accepts OpenAI image params: `model`, `prompt`, `size` (`WxH`, clamped 256–2048, multiple of 8), `n` (1–4), `seed`, and `response_format` (`url` data-URI or `b64_json`; both fields are returned). Anonymous results carry the Pollinations logo (`nologo` requires an account and is never sent).
 

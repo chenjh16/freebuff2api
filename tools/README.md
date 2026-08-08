@@ -163,7 +163,7 @@ HTTP 状态、延迟和有限长度的错误摘要。默认最多 3 个并发，
 node tools/model-availability.mjs --help
 node tools/model-availability.mjs --base-url http://127.0.0.1:23333/v1
 node tools/model-availability.mjs --concurrency 2 --json > model-results.json
-node tools/model-availability.mjs --models deepseek/deepseek-v4-flash,openai/gpt-5.6-luna
+node tools/model-availability.mjs --models freebuff/deepseek/deepseek-v4-flash,freebuff/openai/gpt-5.6-luna
 ```
 
 如代理配置了 `API_KEYS`，使用 `--api-key` 或 `FB2API_API_KEY`；脚本不会输出

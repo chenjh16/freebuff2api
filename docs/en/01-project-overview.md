@@ -25,7 +25,7 @@ active session at a time. For every chat request the proxy:
 2. **Starts an agent run** — `POST /api/v1/agent-runs` (`action: START`),
    picking the agent that owns the requested model; runs are reused, rotated
    on an interval, and finished gracefully on shutdown
-3. **Prefers fixed public routes** — for an allowlisted public model (OpenCode, Pollinations chat/image, or Felo), the proxy sends the translated body to the matching fixed HTTPS provider without forwarding downstream credentials. Every model id has a canonical `provider/model` form and a bare alias; bare aliases route by provider priority (Freebuff last). The aggregate is enabled by default and can be disabled with `PUBLIC_UPSTREAM_ENABLED=false`.
+3. **Prefers fixed public routes** — for an allowlisted public model (OpenCode, Pollinations chat/image, or Felo), the proxy sends the translated body to the matching fixed HTTPS provider without forwarding downstream credentials. Every model id is provider-namespaced (`freebuff/<model>`, `opencode/<model>`, `pollinations/<model>`, `felo/<model>`); unprefixed ids are neither listed nor routable. On transient failure a request falls through the remaining matching public providers (Freebuff last). The aggregate is enabled by default and can be disabled with `PUBLIC_UPSTREAM_ENABLED=false`.
 4. **Forwards authenticated requests** — `POST /api/v1/chat/completions`, injecting
    `codebuff_metadata` (`run_id`, `client_id`, `cost_mode: "free"`,
    `freebuff_instance_id`, …) plus the **CLI-identity system marker**
