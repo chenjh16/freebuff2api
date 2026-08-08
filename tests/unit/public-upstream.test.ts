@@ -215,6 +215,62 @@ describe("public upstream safety", () => {
     expect(rejected.status).toBe(400);
   });
 
+  test("Pollinations image client posts reference images for img2img", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const client = new PollinationsImageClient({
+      models: ["pollinations/flux"],
+      timeoutMs: 2_000,
+      fetchFn: async (input, init) => {
+        calls.push({ url: String(input), init });
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+      },
+    });
+    const response = await client.imageGenerations(
+      JSON.stringify({
+        model: "pollinations/flux",
+        prompt: "turn the photo into a watercolor",
+        size: "512x512",
+        image: "data:image/png;base64,aGVsbG8=",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init?.method).toBe("POST");
+    expect(calls[0].url).toContain(`/prompt/${encodeURIComponent("turn the photo into a watercolor")}`);
+    const sent = JSON.parse(String(calls[0].init?.body)) as Record<string, unknown>;
+    expect(sent.image).toBe("data:image/png;base64,aGVsbG8=");
+    expect(sent.prompt).toBe("turn the photo into a watercolor");
+    expect(sent.model).toBe("flux");
+    expect(sent.width).toBe(512);
+    expect(sent.height).toBe(512);
+    // No Authorization/cookie/api-key data leaks into the upstream request.
+    expect(calls[0].url).not.toMatch(/[Aa]uthorization|api[_-]?key|cookie/i);
+    expect(String(calls[0].init?.body)).not.toMatch(/[Aa]uthorization|api[_-]?key|cookie/i);
+  });
+
+  test("Pollinations image client supports multiple reference images and rejects too many", async () => {
+    const calls: { init?: RequestInit }[] = [];
+    const client = new PollinationsImageClient({
+      models: ["pollinations/flux"],
+      timeoutMs: 2_000,
+      fetchFn: async (_input, init) => {
+        calls.push({ init });
+        return new Response(new Uint8Array([1]), { status: 200 });
+      },
+    });
+    const response = await client.imageGenerations(
+      JSON.stringify({ model: "pollinations/flux", prompt: "x", image: ["data:a", "data:b"] }),
+    );
+    expect(response.status).toBe(200);
+    const sent = JSON.parse(String(calls[0].init?.body)) as { image: unknown };
+    expect(sent.image).toEqual(["data:a", "data:b"]);
+
+    const rejected = await client.imageGenerations(
+      JSON.stringify({ model: "pollinations/flux", prompt: "x", image: ["a", "b", "c", "d", "e"] }),
+    );
+    expect(rejected.status).toBe(400);
+  });
+
   test("Pollinations image client rejects bad input", async () => {
     const client = new PollinationsImageClient({ models: ["pollinations/flux"], timeoutMs: 2_000 });
     const badModel = await client.imageGenerations(JSON.stringify({ model: "pollinations/openai", prompt: "x" }));

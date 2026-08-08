@@ -158,6 +158,10 @@ function models(deps: HandlerDeps, startedAt: number): Response {
     object: "model",
     created,
     owned_by: ownedByOf(model),
+    // Capability hint for clients: image models answer `POST
+    // /v1/images/generations` (e.g. pollinations/flux), everything else is a
+    // chat model (`POST /v1/chat/completions`).
+    type: publicImageIds.includes(model) ? "image" : "chat",
     root: model,
     permission: [],
   }));

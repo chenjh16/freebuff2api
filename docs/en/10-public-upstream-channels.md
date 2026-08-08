@@ -28,7 +28,7 @@ Disable everything with `PUBLIC_UPSTREAM_ENABLED=false`; narrow it with
 | ---- | ---- | ---- | ---- | ---- |
 | OpenCode Zen | `https://opencode.ai/zen/v1` (override: `PUBLIC_UPSTREAM_BASE_URL`, HTTPS `opencode.ai` host only) | None | OpenAI chat, SSE streaming | 4 chat |
 | Pollinations chat | `https://gen.pollinations.ai/v1` | None | OpenAI chat, SSE streaming | 8 chat |
-| Pollinations image | `https://image.pollinations.ai` | None (watermark removal `nologo` requires a token and is never sent) | `GET /prompt/<prompt>?…` → OpenAI images response | 3 image |
+| Pollinations image | `https://image.pollinations.ai` | None (watermark removal `nologo` requires a token and is never sent) | `GET /prompt/<prompt>?…`; `POST` with JSON `image` refs for img2img → OpenAI images response | 3 image |
 | Felo | `https://felo.ai` | None | Reverse-engineered web protocol (chat-like categories), SSE relayed as OpenAI stream | 5 chat |
 
 Model ids: every model has a single provider-prefixed `provider/model` id
@@ -86,6 +86,10 @@ Freebuff last). Full catalog: [09 - Model Catalog & Routing](09-model-catalog.md
 
 - `GET https://image.pollinations.ai/prompt/<prompt>?width=…&height=…&seed=…&model=…&format=jpeg`,
   translated to an OpenAI images response (`url` data-URI + `b64_json`).
+- **img2img / image editing**: an optional `image` field (data URI or public
+  URL, or an array of up to 4) switches the request to `POST` with the
+  reference image(s) in the JSON body (verified against the live upstream;
+  GET query strings cannot carry large data URIs).
 - `nologo` (watermark removal) requires an account token and is intentionally
   **never** sent — anonymous results carry the Pollinations logo.
 - Images are fetched synchronously and base64-encoded before responding, so

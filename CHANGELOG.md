@@ -72,6 +72,13 @@
   docs 05 标注 fable 仅远程可用；移除 `session.refresh()` 空 try/catch；
   `DEFAULT_MAX_BODY_BYTES` 收敛到 `config.ts` 单一来源并抽取共享
   `readJsonBody` 助手；新增 3 个单元测试（URL 校验门控 ×2、兜底先行 ×1）
+- **Web 模型试玩面板完整支持图片**：`/v1/models` 新增 `type` 能力字段（图片
+  模型为 `image`，其余为 `chat`）；试玩面板按能力分组展示模型，选中图片模型
+  时自动走 `/v1/images/generations` 并在面板内渲染生成的图片（可下载）。输入
+  框新增图片上传按钮（客户端压缩至 ≤1024px、最多 4 张）：chat 模型以 OpenAI
+  `image_url` content 数组做多模态输入；图片模型可附参考图做 img2img / 编辑
+  （`PollinationsImageClient` 支持 `image` 字段，有参考图时改用 POST 携带，
+  已对线上上游实测验证）。新增 2 个单元测试（img2img POST、多图/超限拒绝）
 
 ### Changed
 

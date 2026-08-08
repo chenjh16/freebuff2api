@@ -450,6 +450,13 @@ export class PollinationsImageClient {
     if (typeof count === "string") return imageErrorResponse(400, count);
     const seedBase = typeof payload.seed === "number" && Number.isFinite(payload.seed) ? Math.trunc(payload.seed) : undefined;
     const wantB64 = payload.response_format === "b64_json";
+    // Reference images for img2img / image editing: a data URI or public URL
+    // (or an array of them). Sent over POST because data URIs are far larger
+    // than a GET query string can carry.
+    const imageRef = parseImageRef(payload.image);
+    if (imageRef && imageRef.length > 4) {
+      return imageErrorResponse(400, "image accepts at most 4 reference images");
+    }
 
     const created = Math.floor(Date.now() / 1000);
     const results: { url: string; b64_json: string }[] = [];
@@ -462,11 +469,32 @@ export class PollinationsImageClient {
       url.searchParams.set("model", model);
       url.searchParams.set("format", "jpeg");
       // Never send nologo: watermark removal requires an account token.
-      const response = await this.fetchFn(url.toString(), {
-        method: "GET",
-        headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,*/*", "User-Agent": "freebuff2api public adapter" },
-        signal: requestSignal,
-      });
+      let response: Response;
+      if (imageRef && imageRef.length > 0) {
+        // POST keeps large data-URI reference images out of the query string.
+        response = await this.fetchFn(url.toString(), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "freebuff2api public adapter",
+          },
+          body: JSON.stringify({
+            prompt,
+            model,
+            width: size.width,
+            height: size.height,
+            seed,
+            image: imageRef.length === 1 ? imageRef[0] : imageRef,
+          }),
+          signal: requestSignal,
+        });
+      } else {
+        response = await this.fetchFn(url.toString(), {
+          method: "GET",
+          headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,*/*", "User-Agent": "freebuff2api public adapter" },
+          signal: requestSignal,
+        });
+      }
       if (!response.ok) return response;
       const mime = response.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
       const b64 = Buffer.from(await response.arrayBuffer()).toString("base64");
@@ -493,6 +521,20 @@ function parseImageCount(raw: unknown): number | string {
   if (typeof raw !== "number" || !Number.isInteger(raw)) return "n must be an integer";
   if (raw < 1 || raw > 4) return "n must be between 1 and 4";
   return raw;
+}
+
+/**
+ * Parse an OpenAI `image` field into a list of reference images (data URIs or
+ * public URLs) for img2img / image editing. Returns null when absent/empty.
+ */
+function parseImageRef(raw: unknown): string[] | null {
+  if (raw === undefined || raw === null) return null;
+  const items = Array.isArray(raw) ? raw : [raw];
+  const list: string[] = [];
+  for (const item of items) {
+    if (typeof item === "string" && item.trim()) list.push(item.trim());
+  }
+  return list.length > 0 ? list : null;
 }
 
 /** Felo is no-auth but not OpenAI-compatible; this adapter translates its web SSE protocol. */

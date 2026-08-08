@@ -197,7 +197,7 @@ describe("Server HTTP surface", () => {
     try {
       const resp = await fetch(`${started.base}/v1/models`);
       expect(resp.status).toBe(200);
-      const body = (await resp.json()) as { data: { id: string; owned_by: string }[] };
+      const body = (await resp.json()) as { data: { id: string; owned_by: string; type?: string }[] };
       const ids = body.data.map((m) => m.id);
       expect(ids).toContain(FB_MODEL);
       expect(ids).toContain("pollinations/openai");
@@ -213,6 +213,11 @@ describe("Server HTTP surface", () => {
       expect(byId.get("opencode/big-pickle")).toBe("opencode");
       expect(byId.get("pollinations/openai")).toBe("pollinations");
       expect(byId.get("pollinations/flux")).toBe("pollinations");
+      // Capability hints: image models answer /v1/images/generations.
+      const typeById = new Map(body.data.map((m) => [m.id, m.type]));
+      expect(typeById.get("pollinations/flux")).toBe("image");
+      expect(typeById.get("pollinations/openai")).toBe("chat");
+      expect(typeById.get(FB_MODEL)).toBe("chat");
     } finally {
       await started.server.close();
     }

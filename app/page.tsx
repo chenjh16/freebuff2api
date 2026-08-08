@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -33,6 +33,25 @@ const GATE_KEY = "freebuff2api_site_token";
 // account token, so the playground works for a signed-out visitor the moment
 // the model list loads (and stays valid once the page switches to ids[0]).
 const DEFAULT_MODEL = "opencode/deepseek-v4-flash-free";
+
+/** Playground image attachments and image-model output sizes. */
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACH_BYTES = 8 * 1024 * 1024;
+const IMAGE_SIZES = ["1024x1024", "1536x1024", "1024x1536", "768x768"] as const;
+
+/** A model advertised by `/v1/models`; `type` tells which endpoint it serves. */
+interface ModelInfo {
+  id: string;
+  type: "chat" | "image";
+}
+
+/** An image picked for multimodal chat input or img2img/editing. */
+interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  dataUrl: string;
+}
 
 function uuid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -130,6 +149,41 @@ function maskKey(key: string): string {
   return `${key.slice(0, 10)}${"•".repeat(10)}${key.slice(-4)}`;
 }
 
+/**
+ * Read an image file, downscale it to at most 1024px and compress it to a
+ * data URL. Keeps payloads small enough for chat vision and img2img requests.
+ */
+function fileToImageDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("could not read image"));
+    reader.onload = () => {
+      const source = String(reader.result);
+      const img = new Image();
+      img.onerror = () => reject(new Error("unsupported image format"));
+      img.onload = () => {
+        const MAX = 1024;
+        const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+        const width = Math.max(1, Math.round(img.naturalWidth * scale));
+        const height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          reject(new Error("canvas unavailable"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const keepPng = file.type === "image/png";
+        resolve(canvas.toDataURL(keepPng ? "image/png" : "image/jpeg", keepPng ? undefined : 0.85));
+      };
+      img.src = source;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -137,7 +191,7 @@ function maskKey(key: string): string {
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [booting, setBooting] = useState(true);
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
 
   // site access gate
@@ -162,6 +216,11 @@ export default function Home() {
   const [thinking, setThinking] = useState("");
   const [output, setOutput] = useState("");
   const [outputError, setOutputError] = useState(false);
+  // playground image attachments / generated images
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+  const [imageSize, setImageSize] = useState<string>(IMAGE_SIZES[0]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -179,20 +238,62 @@ export default function Home() {
     [session],
   );
 
+  const imageModels = useMemo(() => new Set(models.filter((m) => m.type === "image").map((m) => m.id)), [models]);
+  const isImageModel = imageModels.has(model);
+
   const refreshModels = useCallback(async () => {
     if (!session) return;
     try {
       const resp = await fetch("/v1/models", { headers: authHeaders() });
       if (resp.ok) {
-        const body = (await resp.json()) as { data?: { id: string }[] };
-        const ids = body?.data?.map((m) => m.id) ?? [];
-        setModels(ids);
+        const body = (await resp.json()) as { data?: { id: string; type?: string }[] };
+        const infos = (body?.data ?? []).map((m) => ({
+          id: m.id,
+          type: m.type === "image" ? ("image" as const) : ("chat" as const),
+        }));
+        const ids = infos.map((m) => m.id);
+        setModels(infos);
         if (ids.length > 0 && !ids.includes(model)) setModel(ids[0]);
       }
     } catch {
       // Models list is best-effort.
     }
   }, [session, authHeaders, model]);
+
+  // ---- image attachments -------------------------------------------------
+
+  const addFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files) return;
+      const images = Array.from(files).filter((f) => f.type.startsWith("image/"));
+      if (images.length === 0) {
+        showToast("Please choose image files", "err");
+        return;
+      }
+      const room = MAX_ATTACHMENTS - attachments.length;
+      if (room <= 0) {
+        showToast(`Up to ${MAX_ATTACHMENTS} images`, "err");
+        return;
+      }
+      for (const file of images.slice(0, room)) {
+        if (file.size > MAX_ATTACH_BYTES) {
+          showToast(`${file.name} is too large (>8MB)`, "err");
+          continue;
+        }
+        try {
+          const dataUrl = await fileToImageDataUrl(file);
+          setAttachments((prev) => [...prev, { id: uuid(), name: file.name, mime: file.type, dataUrl }]);
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "could not read image", "err");
+        }
+      }
+    },
+    [attachments.length, showToast],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
 
   const finishRegister = useCallback(
     async (transactionId: string) => {
@@ -371,20 +472,62 @@ export default function Home() {
   // ---- playground --------------------------------------------------------
 
   const runChat = useCallback(async () => {
-    if (!session || !prompt.trim() || running) return;
+    if (!session || running) return;
+    if (!prompt.trim() && attachments.length === 0) return;
     setRunning(true);
     setOutput("");
     setThinking("");
+    setGeneratedImages([]);
     setOutputError(false);
     const controller = new AbortController();
     abortRef.current = controller;
     let streamedOutput = "";
     let streamedThinking = "";
     try {
+      // Image models answer /v1/images/generations: text-to-image, or
+      // img2img / editing when a reference image is attached.
+      if (isImageModel) {
+        const payload: Record<string, unknown> = {
+          model,
+          prompt: prompt.trim() || "generate an image",
+          n: 1,
+          size: imageSize,
+        };
+        if (attachments.length > 0) payload.image = attachments[0].dataUrl;
+        const imageResp = await fetch("/v1/images/generations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!imageResp.ok) {
+          const body = (await imageResp.json().catch(() => null)) as { error?: { message?: string } } | null;
+          setOutput(body?.error?.message ?? `Request failed with status ${imageResp.status}`);
+          setOutputError(true);
+          return;
+        }
+        const imageBody = (await imageResp.json()) as { data?: { url?: string }[] };
+        const urls = (imageBody.data ?? []).map((d) => d.url).filter((u): u is string => Boolean(u));
+        if (urls.length === 0) {
+          setOutput("(image generation returned no images)");
+          return;
+        }
+        setGeneratedImages(urls);
+        return;
+      }
+
+      // Chat models: multimodal input via OpenAI content arrays.
+      const content: unknown =
+        attachments.length > 0
+          ? [
+              { type: "text", text: prompt },
+              ...attachments.map((a) => ({ type: "image_url", image_url: { url: a.dataUrl } })),
+            ]
+          : prompt;
       const resp = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ model, stream: true, messages: [{ role: "user", content: prompt }] }),
+        body: JSON.stringify({ model, stream: true, messages: [{ role: "user", content }] }),
         signal: controller.signal,
       });
       if (!resp.ok) {
@@ -443,7 +586,7 @@ export default function Home() {
       setRunning(false);
       abortRef.current = null;
     }
-  }, [session, prompt, running, model, authHeaders]);
+  }, [session, prompt, running, model, authHeaders, attachments, isImageModel, imageSize]);
 
   const stopChat = useCallback(() => abortRef.current?.abort(), []);
 
@@ -467,6 +610,8 @@ export default function Home() {
     stopPolling();
     setSession(null);
     setModels([]);
+    setAttachments([]);
+    setGeneratedImages([]);
     setOutput("");
     setThinking("");
     showToast("Signed out — API key revoked", "ok");
@@ -532,6 +677,14 @@ export default function Home() {
           thinking={thinking}
           output={output}
           outputError={outputError}
+          attachments={attachments}
+          onAddFiles={(files) => void addFiles(files)}
+          onRemoveAttachment={removeAttachment}
+          fileInputRef={fileInputRef}
+          isImageModel={isImageModel}
+          imageSize={imageSize}
+          setImageSize={setImageSize}
+          generatedImages={generatedImages}
           revealKey={revealKey}
           setRevealKey={setRevealKey}
           baseURL={baseURL}
@@ -795,7 +948,7 @@ function LoginView(props: {
 
 function DashboardView(props: {
   session: Session;
-  models: string[];
+  models: ModelInfo[];
   model: string;
   setModel: (m: string) => void;
   prompt: string;
@@ -804,6 +957,14 @@ function DashboardView(props: {
   thinking: string;
   output: string;
   outputError: boolean;
+  attachments: Attachment[];
+  onAddFiles: (files: FileList | null) => void;
+  onRemoveAttachment: (id: string) => void;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  isImageModel: boolean;
+  imageSize: string;
+  setImageSize: (v: string) => void;
+  generatedImages: string[];
   revealKey: boolean;
   setRevealKey: (v: boolean) => void;
   baseURL: string;
@@ -818,6 +979,7 @@ function DashboardView(props: {
   showToast: (msg: string, kind?: ToastKind) => void;
 }) {
   const { session, models, model, setModel, prompt, setPrompt, running, thinking, output, outputError } = props;
+  const { attachments, onAddFiles, onRemoveAttachment, fileInputRef, isImageModel, imageSize, setImageSize, generatedImages } = props;
   const { revealKey, setRevealKey, baseURL, curlUnix, curlWindows, logoutOpen, setLogoutOpen } = props;
   const { onRun, onStop, onLogout, onCopy } = props;
 
@@ -899,11 +1061,26 @@ function DashboardView(props: {
               {models.length === 0 ? (
                 <option value={model}>{model}</option>
               ) : (
-                models.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))
+                <>
+                  <optgroup label="Chat models">
+                    {models
+                      .filter((m) => m.type !== "image")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="Image models">
+                    {models
+                      .filter((m) => m.type === "image")
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}
+                        </option>
+                      ))}
+                  </optgroup>
+                </>
               )}
             </select>
             {running ? (
@@ -911,18 +1088,81 @@ function DashboardView(props: {
                 Stop
               </button>
             ) : (
-              <button className="btn" onClick={onRun} disabled={!prompt.trim()}>
+              <button
+                className="btn"
+                onClick={onRun}
+                disabled={!prompt.trim() && (attachments.length === 0 || isImageModel)}
+              >
                 Run
               </button>
             )}
           </div>
+
+          {isImageModel ? (
+            <div className="row img-opts">
+              <select className="model-select size-select" value={imageSize} onChange={(e) => setImageSize(e.target.value)}>
+                {IMAGE_SIZES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <span className="dim img-hint">
+                Image model — describe the picture, or attach a reference image for img2img / editing.
+              </span>
+            </div>
+          ) : null}
+
           <textarea
             className="prompt"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Ask the model anything…"
+            placeholder={isImageModel ? "Describe the image to generate…" : "Ask the model anything…"}
             style={{ marginTop: 12 }}
           />
+
+          <div className="attach-bar">
+            {attachments.map((a) => (
+              <div className="attach-thumb" key={a.id}>
+                <img src={a.dataUrl} alt={a.name} title={a.name} />
+                <button className="attach-remove" onClick={() => onRemoveAttachment(a.id)} aria-label={`Remove ${a.name}`}>
+                  ×
+                </button>
+              </div>
+            ))}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                onAddFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              className="btn icon attach-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={running || attachments.length >= MAX_ATTACHMENTS}
+              title="Attach images (multimodal chat input / img2img reference)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+              {attachments.length > 0 ? `${attachments.length}/${MAX_ATTACHMENTS}` : "Image"}
+            </button>
+          </div>
 
           {thinking ? (
             <details className="thinking" open>
@@ -932,8 +1172,31 @@ function DashboardView(props: {
           ) : null}
 
           <div className={`output${outputError ? " error" : ""}`}>
-            {output || <span className="dim">{running ? "Streaming…" : "The streamed reply appears here."}</span>}
+            {output || (
+              <span className="dim">
+                {running
+                  ? isImageModel
+                    ? "Generating image…"
+                    : "Streaming…"
+                  : isImageModel
+                    ? "The generated image appears here."
+                    : "The streamed reply appears here."}
+              </span>
+            )}
           </div>
+
+          {generatedImages.length > 0 ? (
+            <div className="img-grid">
+              {generatedImages.map((src, i) => (
+                <figure className="img-item" key={i}>
+                  <img src={src} alt={`Generated image ${i + 1}`} />
+                  <a className="btn icon img-dl" href={src} download={`${model.replace("/", "-")}-${i + 1}.jpg`}>
+                    Download
+                  </a>
+                </figure>
+              ))}
+            </div>
+          ) : null}
         </section>
 
         <footer className="dash-footer">

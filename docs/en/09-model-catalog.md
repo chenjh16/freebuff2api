@@ -22,10 +22,13 @@ names its provider explicitly.
 `GET /v1/models` lists every prefixed id (deduplicated, sorted, OpenAI `list`
 shape). `owned_by` reports the owning provider: `freebuff2api` for Freebuff
 registry models, and `opencode` / `pollinations` / `felo` for the public
-channels. A prefixed id always routes to its explicit provider. When a request
-fails transiently, it falls through the remaining matching public providers in
-`PUBLIC_UPSTREAM_PROVIDERS` order (default `opencode, pollinations, felo`),
-then the authenticated Freebuff path last.
+channels. Each entry also carries a `type` capability hint: `"image"` for
+image models (they answer `POST /v1/images/generations`) and `"chat"` for
+everything else, so clients can route correctly. A prefixed id always routes
+to its explicit provider. When a request fails transiently, it falls through
+the remaining matching public providers in `PUBLIC_UPSTREAM_PROVIDERS` order
+(default `opencode, pollinations, felo`), then the authenticated Freebuff path
+last.
 
 ## Chat models (`POST /v1/chat/completions`)
 
@@ -88,6 +91,7 @@ Request (OpenAI images API shape):
 | `n` | Number of images; each gets seed + i |
 | `seed` | Optional; omitted = random |
 | `response_format` | `b64_json` → only `b64_json` per item; otherwise `url` (a `data:` URI) plus `b64_json` |
+| `image` | Optional reference image for **img2img / editing** — a data URI or public URL (or an array of up to 4). When present the upstream request is sent as `POST` with the image(s) in the JSON body, because data URIs are too large for a GET query string |
 
 Response:
 
@@ -95,7 +99,9 @@ Response:
 { "created": 1786000000, "data": [{ "url": "data:image/jpeg;base64,...", "b64_json": "..." }] }
 ```
 
-Notes: the upstream call is `GET image.pollinations.ai/prompt/<prompt>?width=…&height=…&seed=…&model=…&format=jpeg` with no credentials. `nologo` (watermark removal) requires an account token and is intentionally never sent — anonymous results carry the Pollinations logo. Images are fetched synchronously and base64-encoded before responding, so latency scales with generation time. Image generation uses its own **≥60s** per-image timeout, independent of `PUBLIC_UPSTREAM_TIMEOUT` (default 20s), because anonymous image rendering is slower than chat.
+Notes: the upstream call is `GET image.pollinations.ai/prompt/<prompt>?width=…&height=…&seed=…&model=…&format=jpeg` with no credentials; when an `image` reference is present it becomes `POST` to the same URL with a JSON body carrying `prompt`/`model`/`width`/`height`/`seed` and the reference image(s) (verified against the live upstream). `nologo` (watermark removal) requires an account token and is intentionally never sent — anonymous results carry the Pollinations logo. Images are fetched synchronously and base64-encoded before responding, so latency scales with generation time. Image generation uses its own **≥60s** per-image timeout, independent of `PUBLIC_UPSTREAM_TIMEOUT` (default 20s), because anonymous image rendering is slower than chat.
+
+The hosted web console's model playground supports all of this: pick an image model to generate an image, attach images to the chat input for multimodal chat, and attach a reference image to an image model for img2img / editing.
 
 ## Streaming compatibility (strict clients)
 
