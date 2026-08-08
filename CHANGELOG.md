@@ -47,6 +47,16 @@
   `image` 参考图 / img2img（POST）；根 README 试玩面板描述补图片生成与图片
   上传；`env.example` 补 `PROXY_SECRET_FILE` 说明；合并 CHANGELOG Unreleased
   中重复的 `### Changed` 标题。
+- **CLI 标记注入不再清空多模态 system 消息**：当客户端 system 消息的
+  `content` 是数组（多模态 parts）时，标记注入此前会把整个 content 替换成
+  标记文本、丢失客户端指令；现在改为在数组头部追加一个 `text` part，原有
+  parts 完整保留（检测逻辑同样覆盖数组内的文本 part）。新增单元测试。
+- **API Key 铸造缓存加限**：`account.ts` 的 `token→key` 缓存超过 10000 条后
+  剪除最旧条目（key 为无状态 AES 密文，剪除只影响“同 token 重新注册返回同
+  key”的去重，已签发 key 始终可解密），防止托管长运行进程内存无界增长；
+  移除页面中未使用的 `accountName` 局部变量。新增单元测试。
+- **文档补充**：docs/en/07 快速开始补图片生成 curl 示例（与 zh 版一致）；
+  docs 08（en/zh）流式说明明确 chat 与图片生成路由均为 300s 长连接上限。
 - **公共上游流式响应兼容严格客户端（Cherry Studio 报
   `AI_FinishReasonError: Response ended with finish reason "other"`）**：
   OpenCode Zen 免费层在输出完 `reasoning_content` 后可能直接结束、不发送任何

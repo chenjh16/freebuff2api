@@ -53,7 +53,7 @@ The helper scripts used during reverse-engineering and verification live in
 ## Verification status
 
 - ✅ `bun run typecheck` (tsc -b --noEmit) passes
-- ✅ 161 unit tests pass (`bun test tests/unit`) covering config, public-upstream
+- ✅ 163 unit tests pass (`bun test tests/unit`) covering config, public-upstream
   safety (aliases, image client, provider priority), models (incl. `freebuff/`
   prefix), runs, session admission (409/503/429 classification), and the server
   surface (incl. `/v1/images/generations`)

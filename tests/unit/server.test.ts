@@ -438,6 +438,27 @@ describe("Server HTTP surface", () => {
     expect(system.content).toContain("You are a helpful assistant.");
   });
 
+  test("preserves array-content system messages while injecting the marker", async () => {
+    harness.bodies.length = 0;
+    const systemParts = [
+      { type: "text", text: "Keep this system instruction." },
+      { type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+    ];
+    await chatPost(base, {
+      model: FB_MODEL,
+      messages: [{ role: "system", content: systemParts }, { role: "user", content: "hi" }],
+    });
+    const sent = JSON.parse(harness.bodies[0]) as { messages: { role: string; content: unknown }[] };
+    const system = sent.messages.find((m) => m.role === "system")!;
+    expect(Array.isArray(system.content)).toBe(true);
+    const parts = system.content as Record<string, unknown>[];
+    // The marker is prepended as a text part; the client's parts survive.
+    expect(parts[0]?.type).toBe("text");
+    expect(String(parts[0]?.text ?? "")).toContain(MARKER_PHRASE);
+    expect(parts[1]).toEqual({ type: "text", text: "Keep this system instruction." });
+    expect(parts[2]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,abc" } });
+  });
+
   test("does not double-inject when the marker is already present", async () => {
     harness.bodies.length = 0;
     const clientSystem = "You are Buffy, the strategic coding assistant. Custom prompt.";

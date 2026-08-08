@@ -987,7 +987,6 @@ function DashboardView(props: {
   const { onRun, onStop, onLogout, onCopy } = props;
 
   const displayKey = revealKey ? session.apiKey : maskKey(session.apiKey);
-  const accountName = session.user?.name || session.user?.email || "Freebuff account";
 
   return (
     <div className="wrap">

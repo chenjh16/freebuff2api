@@ -23,6 +23,11 @@ curl http://localhost:23333/v1/models
 curl http://localhost:23333/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"freebuff/deepseek/deepseek-v4-flash","messages":[{"role":"user","content":"Hello!"}]}'
+
+# Image generation (Pollinations, no auth)
+curl http://localhost:23333/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"pollinations/flux","prompt":"a tiny red circle on a white background","size":"256x256","n":1}'
 ```
 
 Point any OpenAI-compatible client at `http://localhost:23333/v1`.

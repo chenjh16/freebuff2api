@@ -63,6 +63,18 @@ describe("account API keys (sk-fb-*)", () => {
     expect(next).not.toBe(key);
     expect(resolveApiKeyToken(next)).toBe("again");
   });
+
+  test("prunes the mint cache so it cannot grow without bound", () => {
+    const first = generateApiKey("prune-token-0");
+    for (let i = 1; i < 10_100; i++) generateApiKey(`prune-token-${i}`);
+    // Keys are stateless ciphertext: already-issued keys keep resolving even
+    // after their cache entry is pruned.
+    expect(resolveApiKeyToken(first)).toBe("prune-token-0");
+    // The pruned token re-mints a fresh key on the next registration.
+    const reminted = generateApiKey("prune-token-0");
+    expect(reminted).not.toBe(first);
+    expect(resolveApiKeyToken(reminted)).toBe("prune-token-0");
+  });
 });
 
 describe("secret stability across processes/restarts", () => {

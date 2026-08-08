@@ -586,14 +586,23 @@ function injectUpstreamMetadata(
 function injectCliSystemMarker(payload: Record<string, unknown>): void {
   const messages = payload.messages;
   if (!Array.isArray(messages)) return;
-  const already = messages.some(
-    (m) =>
-      m &&
-      typeof m === "object" &&
-      (m as { role?: unknown }).role === "system" &&
-      typeof (m as { content?: unknown }).content === "string" &&
-      ((m as { content: string }).content.includes(CLI_SYSTEM_MARKER_PHRASE)),
-  );
+  const already = messages.some((m) => {
+    if (!m || typeof m !== "object" || (m as { role?: unknown }).role !== "system") return false;
+    const content = (m as { content?: unknown }).content;
+    if (typeof content === "string") return content.includes(CLI_SYSTEM_MARKER_PHRASE);
+    // Multimodal system messages carry content parts; the phrase may live in
+    // one of the text parts.
+    if (Array.isArray(content)) {
+      return content.some(
+        (part) =>
+          part &&
+          typeof part === "object" &&
+          typeof (part as { text?: unknown }).text === "string" &&
+          (part as { text: string }).text.includes(CLI_SYSTEM_MARKER_PHRASE),
+      );
+    }
+    return false;
+  });
   if (already) return;
 
   const firstSystem = messages.findIndex(
@@ -605,8 +614,12 @@ function injectCliSystemMarker(payload: Record<string, unknown>): void {
   }
   const existing = messages[firstSystem] as Record<string, unknown>;
   const content = existing.content;
-  if (typeof content === "string" && content.length > 0) {
-    existing.content = `${CLI_SYSTEM_MARKER}\n\n${content}`;
+  if (typeof content === "string") {
+    existing.content = content.length > 0 ? `${CLI_SYSTEM_MARKER}\n\n${content}` : CLI_SYSTEM_MARKER;
+  } else if (Array.isArray(content)) {
+    // Preserve every existing part and prepend the CLI identity marker as a
+    // text part, so a multimodal system message is never clobbered.
+    existing.content = [{ type: "text", text: CLI_SYSTEM_MARKER }, ...content];
   } else {
     existing.content = CLI_SYSTEM_MARKER;
   }

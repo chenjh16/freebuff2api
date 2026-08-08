@@ -49,7 +49,7 @@
 ## 验证状态
 
 - ✅ `bun run typecheck`（tsc -b --noEmit）通过
-- ✅ 161 个单元测试通过（`bun test tests/unit`），覆盖配置、公共上游安全
+- ✅ 163 个单元测试通过（`bun test tests/unit`），覆盖配置、公共上游安全
   （前缀路由、图片客户端、供应商优先级）、模型注册表（含 `freebuff/` 前缀）、
   run 管理、会话准入（409/503/429 分类）与服务器接口（含
   `/v1/images/generations`）

@@ -35,6 +35,11 @@ export const API_KEY_PREFIX = "sk-fb-";
 const REVOKED = new Set<string>();
 /** token → minted key, so re-registering the same account returns the same key. */
 const KEY_BY_TOKEN = new Map<string, string>();
+// Cap the mint cache so a long-running hosted process cannot grow without
+// bound. Keys are stateless AES ciphertext, so pruning only means a
+// re-registering account gets a fresh key — already-issued keys keep decrypting.
+const KEY_BY_TOKEN_MAX = 10_000;
+const KEY_BY_TOKEN_PRUNE = 2_000;
 
 /** Where the fallback secret is persisted when no env secret is configured. */
 function persistedSecretPath(): string {
@@ -91,6 +96,12 @@ export function generateApiKey(authToken: string): string {
   const tag = cipher.getAuthTag();
   const key = `${API_KEY_PREFIX}${Buffer.concat([iv, tag, encrypted]).toString("base64url")}`;
   KEY_BY_TOKEN.set(authToken, key);
+  if (KEY_BY_TOKEN.size > KEY_BY_TOKEN_MAX) {
+    // Prune the oldest entries (Map preserves insertion order).
+    for (const token of [...KEY_BY_TOKEN.keys()].slice(0, KEY_BY_TOKEN_PRUNE)) {
+      KEY_BY_TOKEN.delete(token);
+    }
+  }
   return key;
 }
 

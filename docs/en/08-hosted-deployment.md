@@ -180,8 +180,8 @@ curl https://open.freebuff.app/v1/chat/completions \
   configured:false}` and other proxy endpoints return a clear 503.
 - **CORS:** open on `/v1/*` (preflight answered with `204`), so browser-based
   OpenAI clients can call the endpoint directly.
-- **Streaming:** SSE responses pass through; the chat route allows long-lived
-  streams (max duration 300 s).
+- **Streaming:** SSE responses pass through; the chat and image routes allow
+  long-lived streams (max duration 300 s each).
 - **Account limits are unchanged:** one free session (≈1 hour) per account,
   locked to a single model at a time. A request for a different model while
   the session is pinned returns `409 model_locked` naming the locked model
