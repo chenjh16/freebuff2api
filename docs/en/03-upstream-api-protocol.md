@@ -20,22 +20,44 @@
 ## Fixed public/no-auth upstreams
 
 The proxy has an authenticated Freebuff path and a default-enabled aggregate
-of three fixed public routes: OpenCode Zen, keyless Pollinations, and Felo's
-reverse-engineered web protocol. OpenCode model ids remain bare; Pollinations
-and Felo require strict `pollinations/<model>` and `felo/<model>` namespaces.
+of fixed public capabilities: OpenCode Zen, keyless Pollinations (chat **and**
+image generation), and Felo's reverse-engineered web protocol.
+
+### Model id scheme
+
+Every model id has a canonical `provider/model` form and a bare alias:
+
+| Provider | Canonical | Bare alias |
+| ---- | ---- | ---- |
+| Freebuff | `freebuff/<model>` (e.g. `freebuff/deepseek/deepseek-v4-flash`) | `<model>` (e.g. `deepseek/deepseek-v4-flash`) |
+| OpenCode | `opencode/big-pickle` | `big-pickle` |
+| Pollinations chat | `pollinations/openai` | `openai` |
+| Pollinations image | `pollinations/flux` | `flux` |
+| Felo | `felo/felo-chat` | `felo-chat` |
+
+Bare aliases are deduplicated and route by `PUBLIC_UPSTREAM_PROVIDERS` priority
+(`opencode` → `pollinations` → `felo`, Freebuff last), so a bare id that exists
+in several providers prefers the first configured public one and falls back
+through the rest before the authenticated Freebuff path.
+
 `PUBLIC_UPSTREAM_BASE_URL` may override only an HTTPS `opencode.ai` URL;
-Pollinations (`https://gen.pollinations.ai/v1`) and Felo (`https://felo.ai`)
-remain fixed. `PUBLIC_UPSTREAM_PROVIDERS` and `PUBLIC_UPSTREAM_MODELS` narrow the
-allowlist, while `PUBLIC_UPSTREAM_ENABLED=false` disables every public route.
+Pollinations (`https://gen.pollinations.ai/v1`, chat; `https://image.pollinations.ai`,
+images) and Felo (`https://felo.ai`) remain fixed. `PUBLIC_UPSTREAM_PROVIDERS`,
+`PUBLIC_UPSTREAM_MODELS` and `PUBLIC_UPSTREAM_IMAGE_MODELS` narrow the allowlist,
+while `PUBLIC_UPSTREAM_ENABLED=false` disables every public route.
 
 Each adapter constructs its own outbound headers and sends only the translated
 request body—never downstream `Authorization`, `x-api-key`, cookies, or a
 Freebuff account token. Timeouts and transient `401/408/425/429/5xx` responses
 try another matching public route and then fall back to authenticated Freebuff;
-a normal `4xx` is returned directly. Pollinations' anonymous catalog excludes
-premium/optional-key models. Felo has no official API and its browser-facing
-protocol may change without notice. Because routed prompts and code leave this
-service, review all selected providers' terms and privacy requirements.
+a normal `4xx` is returned directly (image generation has no authenticated
+fallback and surfaces the provider failure). Pollinations' anonymous catalog
+excludes premium/optional-key models (verified live 2026-08-08); its anonymous
+chat tier additionally returns 401 for some prompt shapes — the proxy treats
+that as transient, so clients should retry or rely on Freebuff fallback. Felo
+has no official API and its browser-facing protocol may change without notice.
+Because routed prompts and code leave this service, review all selected
+providers' terms and privacy requirements.
 
 ## Endpoints at a glance
 

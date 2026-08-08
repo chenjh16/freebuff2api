@@ -20,6 +20,7 @@
  *   PUBLIC_UPSTREAM_PROVIDERS - comma-separated fixed public providers (default opencode,pollinations,felo)
  *   PUBLIC_UPSTREAM_BASE_URL - optional OpenCode public upstream base URL override
  *   PUBLIC_UPSTREAM_MODELS - comma-separated aggregated public model allowlist
+ *   PUBLIC_UPSTREAM_IMAGE_MODELS - comma-separated public image model allowlist (default pollinations/flux,pollinations/turbo,pollinations/zimage)
  *   PUBLIC_UPSTREAM_TIMEOUT - public upstream header timeout (default 20s)
  */
 
@@ -29,6 +30,7 @@ import { join } from "node:path";
 
 import { loadCredentials } from "./login.ts";
 import {
+  DEFAULT_POLLINATIONS_IMAGE_MODELS,
   DEFAULT_PUBLIC_UPSTREAM_ALLOWED_HOSTS,
   DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
   DEFAULT_PUBLIC_UPSTREAM_MODELS,
@@ -68,6 +70,8 @@ export interface Config {
   publicUpstreamBaseURL: string;
   /** Explicit aggregated model allowlist for public providers. */
   publicUpstreamModels: string[];
+  /** Explicit image model allowlist (pollinations/flux, ...). */
+  publicUpstreamImageModels: string[];
   /** Public provider initial-response timeout. */
   publicUpstreamTimeoutMs: number;
 }
@@ -88,6 +92,7 @@ interface RawConfig {
   PUBLIC_UPSTREAM_PROVIDERS?: string[];
   PUBLIC_UPSTREAM_BASE_URL?: string;
   PUBLIC_UPSTREAM_MODELS?: string[];
+  PUBLIC_UPSTREAM_IMAGE_MODELS?: string[];
   PUBLIC_UPSTREAM_TIMEOUT?: string;
 }
 
@@ -102,6 +107,7 @@ const DEFAULTS: RawConfig = {
   PUBLIC_UPSTREAM_ENABLED: "true",
   PUBLIC_UPSTREAM_PROVIDERS: ["opencode", "pollinations", "felo"],
   PUBLIC_UPSTREAM_BASE_URL: DEFAULT_PUBLIC_UPSTREAM_BASE_URL,
+  PUBLIC_UPSTREAM_IMAGE_MODELS: [...DEFAULT_POLLINATIONS_IMAGE_MODELS.map((model) => `pollinations/${model}`)],
   PUBLIC_UPSTREAM_TIMEOUT: "20s",
 };
 
@@ -208,6 +214,7 @@ interface ConfigOverrides {
   publicUpstreamProviders?: string[];
   publicUpstreamBaseURL?: string;
   publicUpstreamModels?: string[];
+  publicUpstreamImageModels?: string[];
   publicUpstreamTimeout?: string;
 }
 
@@ -236,6 +243,7 @@ function loadRawConfig(configPath?: string): RawConfig {
       if (parsed.PUBLIC_UPSTREAM_PROVIDERS !== undefined && Array.isArray(parsed.PUBLIC_UPSTREAM_PROVIDERS)) cfg.PUBLIC_UPSTREAM_PROVIDERS = parsed.PUBLIC_UPSTREAM_PROVIDERS;
       if (parsed.PUBLIC_UPSTREAM_BASE_URL !== undefined) cfg.PUBLIC_UPSTREAM_BASE_URL = parsed.PUBLIC_UPSTREAM_BASE_URL;
       if (parsed.PUBLIC_UPSTREAM_MODELS !== undefined && Array.isArray(parsed.PUBLIC_UPSTREAM_MODELS)) cfg.PUBLIC_UPSTREAM_MODELS = parsed.PUBLIC_UPSTREAM_MODELS;
+      if (parsed.PUBLIC_UPSTREAM_IMAGE_MODELS !== undefined && Array.isArray(parsed.PUBLIC_UPSTREAM_IMAGE_MODELS)) cfg.PUBLIC_UPSTREAM_IMAGE_MODELS = parsed.PUBLIC_UPSTREAM_IMAGE_MODELS;
       if (parsed.PUBLIC_UPSTREAM_TIMEOUT !== undefined) cfg.PUBLIC_UPSTREAM_TIMEOUT = parsed.PUBLIC_UPSTREAM_TIMEOUT;
     } catch (error) {
       console.warn(`[config] failed to parse ${path}: ${String(error)}`);
@@ -263,6 +271,7 @@ function loadRawConfig(configPath?: string): RawConfig {
   if (env.PUBLIC_UPSTREAM_PROVIDERS) cfg.PUBLIC_UPSTREAM_PROVIDERS = splitList(env.PUBLIC_UPSTREAM_PROVIDERS);
   if (env.PUBLIC_UPSTREAM_BASE_URL) cfg.PUBLIC_UPSTREAM_BASE_URL = env.PUBLIC_UPSTREAM_BASE_URL;
   if (env.PUBLIC_UPSTREAM_MODELS) cfg.PUBLIC_UPSTREAM_MODELS = splitList(env.PUBLIC_UPSTREAM_MODELS);
+  if (env.PUBLIC_UPSTREAM_IMAGE_MODELS) cfg.PUBLIC_UPSTREAM_IMAGE_MODELS = splitList(env.PUBLIC_UPSTREAM_IMAGE_MODELS);
   if (env.PUBLIC_UPSTREAM_TIMEOUT) cfg.PUBLIC_UPSTREAM_TIMEOUT = env.PUBLIC_UPSTREAM_TIMEOUT;
 
   return cfg;
@@ -295,6 +304,11 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
   validatePublicUpstreamURL(publicUpstreamBaseURL, ["opencode.ai"]);
   const publicUpstreamProviders = dedupe(options.publicUpstreamProviders ?? raw.PUBLIC_UPSTREAM_PROVIDERS ?? ["opencode", "pollinations", "felo"]);
   const publicUpstreamModels = dedupe(options.publicUpstreamModels ?? raw.PUBLIC_UPSTREAM_MODELS ?? [...DEFAULT_PUBLIC_UPSTREAM_MODELS]);
+  const publicUpstreamImageModels = dedupe(
+    options.publicUpstreamImageModels ??
+      raw.PUBLIC_UPSTREAM_IMAGE_MODELS ??
+      [...DEFAULT_POLLINATIONS_IMAGE_MODELS.map((model) => `pollinations/${model}`)],
+  );
   const publicUpstreamEnabled = options.publicUpstreamEnabled ?? /^(1|true|yes|on)$/i.test(raw.PUBLIC_UPSTREAM_ENABLED ?? "true");
 
   const authTokens = dedupe(options.authTokens ?? raw.AUTH_TOKENS ?? []);
@@ -351,6 +365,7 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
     publicUpstreamProviders,
     publicUpstreamBaseURL,
     publicUpstreamModels,
+    publicUpstreamImageModels,
     publicUpstreamTimeoutMs: parseDuration(options.publicUpstreamTimeout ?? raw.PUBLIC_UPSTREAM_TIMEOUT ?? "20s", 20_000),
   };
 }

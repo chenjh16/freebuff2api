@@ -24,6 +24,7 @@ const ENV_KEYS = [
   "PUBLIC_UPSTREAM_PROVIDERS",
   "PUBLIC_UPSTREAM_BASE_URL",
   "PUBLIC_UPSTREAM_MODELS",
+  "PUBLIC_UPSTREAM_IMAGE_MODELS",
   "PUBLIC_UPSTREAM_TIMEOUT",
   "FREEBUFF2API_CONFIG_DIR",
 ];
@@ -134,6 +135,8 @@ describe("loadConfig", () => {
     expect(cfg.publicUpstreamModels).toContain("big-pickle");
     expect(cfg.publicUpstreamModels).toContain("pollinations/openai");
     expect(cfg.publicUpstreamModels).toContain("felo/felo-chat");
+    expect(cfg.publicUpstreamImageModels).toContain("pollinations/flux");
+    expect(cfg.publicUpstreamImageModels).toContain("pollinations/turbo");
     expect(cfg.publicUpstreamTimeoutMs).toBe(20_000);
   });
 
@@ -213,6 +216,16 @@ describe("loadConfig", () => {
     expect(cfg.publicUpstreamProviders).toEqual(["opencode", "pollinations"]);
     expect(cfg.publicUpstreamModels).toEqual(["big-pickle", "pollinations/openai"]);
     expect(cfg.publicUpstreamTimeoutMs).toBe(3_000);
+  });
+
+  test("parses PUBLIC_UPSTREAM_IMAGE_MODELS with dedupe and defaults", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.PUBLIC_UPSTREAM_IMAGE_MODELS = "pollinations/flux, pollinations/turbo, pollinations/flux";
+    const cfg = loadConfig();
+    expect(cfg.publicUpstreamImageModels).toEqual(["pollinations/flux", "pollinations/turbo"]);
+
+    delete process.env.PUBLIC_UPSTREAM_IMAGE_MODELS;
+    expect(loadConfig().publicUpstreamImageModels).toEqual(["pollinations/flux", "pollinations/turbo", "pollinations/zimage"]);
   });
 
   test("rejects an unallowlisted public upstream host", () => {

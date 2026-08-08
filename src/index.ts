@@ -50,6 +50,7 @@ Environment/configuration:
   PUBLIC_UPSTREAM_ENABLED     default true; set false to disable public providers
   PUBLIC_UPSTREAM_PROVIDERS    comma-separated fixed providers: opencode,pollinations,felo
   PUBLIC_UPSTREAM_MODELS      comma-separated aggregated public model allowlist
+  PUBLIC_UPSTREAM_IMAGE_MODELS comma-separated public image model allowlist
   PUBLIC_UPSTREAM_TIMEOUT     default 20s
 
 Examples:
@@ -170,6 +171,7 @@ async function main(): Promise<void> {
     ? createPublicUpstreamRouter({
         providers: cfg.publicUpstreamProviders,
         models: cfg.publicUpstreamModels,
+        imageModels: cfg.publicUpstreamImageModels,
         baseURL: cfg.publicUpstreamBaseURL,
         timeoutMs: cfg.publicUpstreamTimeoutMs,
       })
@@ -179,7 +181,7 @@ async function main(): Promise<void> {
   log(`upstream: ${cfg.upstreamBaseURL}`);
   log(`tokens: ${cfg.authTokens.length} configured, api keys: ${cfg.apiKeys.length > 0 ? "required" : "open"}`);
   log(`request body limit: ${cfg.maxBodyBytes} bytes; concurrency limit: ${cfg.maxConcurrentRequests}`);
-  log(`public upstream: ${cfg.publicUpstreamEnabled ? `${cfg.publicUpstreamProviders.join(",")} (${cfg.publicUpstreamModels.length} allowlisted models)` : "disabled"}`);
+  log(`public upstream: ${cfg.publicUpstreamEnabled ? `${cfg.publicUpstreamProviders.join(",")} (${cfg.publicUpstreamModels.length} chat models, ${cfg.publicUpstreamImageModels.length} image models)` : "disabled"}`);
   if (cfg.httpProxy) log(`upstream proxy: ${cfg.httpProxy}`);
 
   const target = listenTarget(cfg.listenAddr);

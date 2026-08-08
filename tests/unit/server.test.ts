@@ -28,6 +28,9 @@ function makeFullHarness(opts: {
     models: () => string[];
     hasModel: (model: string) => boolean;
     chatCompletions: (body: string, signal?: AbortSignal) => Promise<Response>;
+    imageModels?: () => string[];
+    hasImageModel?: (model: string) => boolean;
+    imageGenerations?: (body: string, signal?: AbortSignal) => Promise<Response>;
   };
   publicUpstreamEnabled?: boolean;
   chatHandler?: (body: string, call: number) => Response | Promise<Response>;
@@ -52,6 +55,7 @@ function makeFullHarness(opts: {
     publicUpstreamProviders: ["opencode", "pollinations", "felo"],
     publicUpstreamBaseURL: "https://opencode.ai/zen/v1",
     publicUpstreamModels: ["big-pickle"],
+    publicUpstreamImageModels: ["pollinations/flux"],
     publicUpstreamTimeoutMs: 2_000,
   } as Config;
 
@@ -78,7 +82,9 @@ function makeFullHarness(opts: {
   const registry = {
     status: () => ({ source: "fallback" as const, updatedAt: null, agentCount: 2, modelCount: 2 }),
     models: () => opts.models ?? [MODEL],
-    agentForModel: (m: string) => (m === MODEL ? "base2-free-deepseek-flash" : undefined),
+    agentForModel: (m: string) =>
+      m.replace(/^freebuff\//, "") === MODEL ? "base2-free-deepseek-flash" : undefined,
+    canonicalModel: (m: string) => m.replace(/^freebuff\//, ""),
   } as unknown as ModelRegistry;
 
   const tokens = {
@@ -167,6 +173,35 @@ describe("Server HTTP surface", () => {
     const body = (await resp.json()) as { data: { id: string; object: string }[] };
     expect(body.data.map((m) => m.id)).toContain(MODEL);
     expect(body.data[0]?.object).toBe("model");
+  });
+
+  test("GET /v1/models lists canonical ids and bare aliases for every provider", async () => {
+    const catalogHarness = makeFullHarness({
+      publicUpstreamEnabled: true,
+      publicUpstream: {
+        models: () => ["openai", "pollinations/openai", "big-pickle", "opencode/big-pickle"],
+        hasModel: () => true,
+        chatCompletions: async () => new Response("{}", { status: 200 }),
+        imageModels: () => ["flux", "pollinations/flux"],
+        hasImageModel: () => false,
+        imageGenerations: async () => new Response("{}", { status: 200 }),
+      },
+    });
+    const started = await catalogHarness.start();
+    try {
+      const resp = await fetch(`${started.base}/v1/models`);
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as { data: { id: string }[] };
+      const ids = body.data.map((m) => m.id);
+      expect(ids).toContain(MODEL);
+      expect(ids).toContain(`freebuff/${MODEL}`);
+      expect(ids).toContain("openai");
+      expect(ids).toContain("pollinations/openai");
+      expect(ids).toContain("opencode/big-pickle");
+      expect(ids).toContain("pollinations/flux");
+    } finally {
+      await started.server.close();
+    }
   });
 
   test("rejects non-GET methods on read-only endpoints", async () => {
@@ -265,6 +300,81 @@ describe("Server HTTP surface", () => {
     } finally {
       await started.server.close();
     }
+  });
+
+  test("freebuff-prefixed models route to the authenticated Freebuff path", async () => {
+    const harness = makeFullHarness();
+    const started = await harness.start();
+    try {
+      const resp = await chatPost(started.base, { model: `freebuff/${MODEL}`, messages: [{ role: "user", content: "hi" }] });
+      expect(resp.status).toBe(200);
+      expect(harness.chatCalls()).toBe(1);
+      // The canonical id reaches the upstream, not the prefixed alias.
+      const sent = JSON.parse(harness.bodies[0]) as { model: string };
+      expect(sent.model).toBe(MODEL);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("POST /v1/images/generations proxies public image generation", async () => {
+    const publicUpstream = {
+      models: () => [],
+      hasModel: () => false,
+      chatCompletions: async () => new Response("{}", { status: 200 }),
+      imageModels: () => ["pollinations/flux", "flux"],
+      hasImageModel: (model: string) => model === "pollinations/flux" || model === "flux",
+      imageGenerations: async () =>
+        new Response(JSON.stringify({ created: 1, data: [{ b64_json: "abc" }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    };
+    const harness = makeFullHarness({ publicUpstream, publicUpstreamEnabled: true });
+    const started = await harness.start();
+    try {
+      const resp = await fetch(`${started.base}/v1/images/generations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "pollinations/flux", prompt: "a cat" }),
+      });
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as { data: { b64_json: string }[] };
+      expect(body.data[0].b64_json).toBe("abc");
+      expect(harness.chatCalls()).toBe(0);
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("rejects image generation for models without image support", async () => {
+    const publicUpstream = {
+      models: () => [],
+      hasModel: () => false,
+      chatCompletions: async () => new Response("{}", { status: 200 }),
+      imageModels: () => [],
+      hasImageModel: () => false,
+      imageGenerations: async () => new Response("{}", { status: 200 }),
+    };
+    const harness = makeFullHarness({ publicUpstream, publicUpstreamEnabled: true });
+    const started = await harness.start();
+    try {
+      const resp = await fetch(`${started.base}/v1/images/generations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: MODEL, prompt: "a cat" }),
+      });
+      expect(resp.status).toBe(400);
+      const body = (await resp.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("model_not_found");
+    } finally {
+      await started.server.close();
+    }
+  });
+
+  test("image generation rejects non-POST methods", async () => {
+    const resp = await fetch(`${base}/v1/images/generations`);
+    expect(resp.status).toBe(405);
   });
 
   test("POST /v1/chat/completions proxies and injects the CLI marker", async () => {
@@ -606,6 +716,15 @@ describe("proxy API key auth", () => {
 
   test("still requires the key for /v1/chat/completions", async () => {
     const resp = await chatPost(base, { model: MODEL, messages: [{ role: "user", content: "hi" }] });
+    expect(resp.status).toBe(401);
+  });
+
+  test("still requires the key for /v1/images/generations", async () => {
+    const resp = await fetch(`${base}/v1/images/generations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "flux", prompt: "a cat" }),
+    });
     expect(resp.status).toBe(401);
   });
 });

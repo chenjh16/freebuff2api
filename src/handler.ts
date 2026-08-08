@@ -95,6 +95,8 @@ export function createHandler(deps: HandlerDeps): (request: Request) => Promise<
         return models(deps, startedAt);
       case "/v1/chat/completions":
         return chatCompletions(deps, request);
+      case "/v1/images/generations":
+        return imageGenerations(deps, request);
       default:
         return openAIError(404, `unknown endpoint: ${path}`, "invalid_request_error", "not_found");
     }
@@ -140,9 +142,19 @@ function healthz(deps: HandlerDeps, startedAt: number): Response {
 
 function models(deps: HandlerDeps, startedAt: number): Response {
   const created = Math.floor(startedAt / 1000);
+  const registryModels = deps.registry.models();
+  // Canonical model ids are namespaced by provider; every model is also
+  // reachable through its bare alias. Freebuff models are always listed;
+  // public chat/image models only when the public route is enabled.
+  const publicChatIds = deps.cfg.publicUpstreamEnabled
+    ? (deps.publicUpstream?.models() ?? deps.cfg.publicUpstreamModels)
+    : [];
+  const publicImageIds = deps.cfg.publicUpstreamEnabled ? (deps.publicUpstream?.imageModels() ?? []) : [];
   const modelIds = [...new Set([
-    ...deps.registry.models(),
-    ...(deps.cfg.publicUpstreamEnabled ? (deps.publicUpstream?.models() ?? deps.cfg.publicUpstreamModels) : []),
+    ...registryModels,
+    ...registryModels.map((model) => `freebuff/${model}`),
+    ...publicChatIds,
+    ...publicImageIds,
   ])].sort();
   const list = modelIds.map((model) => ({
     id: model,
@@ -226,6 +238,10 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
   if (!agentId) {
     return publicFallbackResponse ?? openAIError(400, `unsupported model "${requestedModel}"`, "invalid_request_error", "model_not_found");
   }
+  // The authenticated Freebuff path always talks in bare registry ids: a
+  // `freebuff/<model>` alias must be normalized before session/run/chat calls
+  // or the upstream reports a model mismatch.
+  const freebuffModel = deps.registry.canonicalModel(requestedModel);
   // A web-login key resolves to the account token that should serve this
   // request; everything below uses lease.poolToken, so the user's token is
   // carried through session/run/chat transparently.
@@ -236,8 +252,8 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
     let lease: { poolToken: string; instanceId: string | null };
     try {
       const acquired = upstreamToken
-        ? await deps.tokens.acquireUserSession(upstreamToken, requestedModel, signal)
-        : await deps.tokens.acquireSession(requestedModel, signal);
+        ? await deps.tokens.acquireUserSession(upstreamToken, freebuffModel, signal)
+        : await deps.tokens.acquireSession(freebuffModel, signal);
       lease = { poolToken: acquired.pool.token, instanceId: acquired.instanceId };
     } catch (error) {
       if (error instanceof WaitingRoomError) {
@@ -272,7 +288,7 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
       return openAIError(502, `failed to start upstream agent run: ${String(error)}`, "server_error", "");
     }
 
-    const upstreamBody = injectUpstreamMetadata(payload, requestedModel, runId, lease.instanceId);
+    const upstreamBody = injectUpstreamMetadata(payload, freebuffModel, runId, lease.instanceId);
     let upstream: Response;
     try {
       upstream = await deps.client.chatCompletions(lease.poolToken, upstreamBody, { signal });
@@ -315,6 +331,72 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
   }
 
   return openAIError(502, "upstream run expired twice in a row", "server_error", "");
+}
+
+async function imageGenerations(deps: HandlerDeps, request: Request): Promise<Response> {
+  if (request.method !== "POST") {
+    return openAIError(405, "method not allowed", "invalid_request_error", "");
+  }
+
+  const signal = request.signal;
+  const maxBodyBytes = deps.cfg.maxBodyBytes || DEFAULT_MAX_BODY_BYTES;
+  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
+    return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
+  }
+
+  let rawBody: string;
+  try {
+    rawBody = await readBodyLimited(request, maxBodyBytes, signal);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
+    }
+    if (signal.aborted) {
+      return openAIError(499, "client closed request", "server_error", "");
+    }
+    throw error;
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(rawBody) as Record<string, unknown>;
+  } catch {
+    return openAIError(400, "request body must be valid JSON", "invalid_request_error", "");
+  }
+
+  const requestedModel = typeof payload.model === "string" ? payload.model.trim() : "";
+  if (!requestedModel) {
+    return openAIError(400, "model is required", "invalid_request_error", "");
+  }
+
+  if (!deps.cfg.publicUpstreamEnabled || !deps.publicUpstream?.hasImageModel(requestedModel)) {
+    return openAIError(
+      400,
+      `image generation is not supported for model "${requestedModel}"`,
+      "invalid_request_error",
+      "model_not_found",
+    );
+  }
+
+  const started = Date.now();
+  try {
+    // Public image generation only: there is no authenticated Freebuff image
+    // path, so a transient provider failure is surfaced directly (the client
+    // can retry) rather than being replayed against another provider.
+    const response = await deps.publicUpstream.imageGenerations(rawBody, signal);
+    if (response.status >= 200 && response.status < 300) {
+      deps.log(`[public-upstream] image generated (model: ${requestedModel}) in ${Date.now() - started}ms`);
+      return passthrough(response);
+    }
+    const body = await response.text().catch(() => "");
+    if (signal.aborted) return openAIError(499, "client closed request", "server_error", "");
+    return upstreamError(response.status, response.headers.get("Retry-After"), body);
+  } catch (error) {
+    if (signal.aborted) return openAIError(499, "client closed request", "server_error", "");
+    deps.log(`[public-upstream] image generation failed: ${String(error)}`);
+    return openAIError(502, `image generation failed: ${String(error)}`, "server_error", "");
+  }
 }
 
 /** Copy a 2xx upstream response (JSON or SSE) to the client, dropping hop-by-hop headers. */

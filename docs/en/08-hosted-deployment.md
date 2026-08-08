@@ -12,7 +12,8 @@ Router app under `app/` that mounts the **exact same** request handler
 ┌─────────────────────────── hosted app (Next.js) ───────────────────────────┐
 │  GET  /healthz               →  ┐                                          │
 │  GET  /v1/models             →  │  app/lib/proxy.ts (lazy singleton)      │
-│  POST /v1/chat/completions   →  ┘  ├─ loadConfig()                        │
+│  POST /v1/chat/completions   →  │  ├─ loadConfig()                        │
+│  POST /v1/images/generations →  ┘  ├─ ModelRegistry (free agents)         │
 │                                    ├─ ModelRegistry (free agents)         │
 │                                    ├─ TokenManager (free sessions)        │
 │                                    ├─ RunManager (agent runs)             │
@@ -35,6 +36,7 @@ CLI-gate system-marker injection).
 | GET | `/healthz` | Public liveness status |
 | GET | `/v1/models` | Free models currently served |
 | POST | `/v1/chat/completions` | Chat — JSON or SSE stream |
+| POST | `/v1/images/generations` | Image generation (Pollinations, anonymous, base64) |
 | POST | `/api/auth/start` | Start a device-code login (web) |
 | GET | `/api/auth/status` | Poll the login until the user signs in |
 | POST | `/api/auth/register` | Validate the account token, mint an `sk-fb-…` key |
@@ -60,18 +62,20 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | `PUBLIC_UPSTREAM_ENABLED` | no | `true` | Try fixed public providers first; set `false` to disable all public routes. |
 | `PUBLIC_UPSTREAM_PROVIDERS` | no | `opencode,pollinations,felo` | Fixed provider ids to enable; arbitrary ids are ignored. |
 | `PUBLIC_UPSTREAM_BASE_URL` | no | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS override; Pollinations/Felo endpoints remain fixed. |
-| `PUBLIC_UPSTREAM_MODELS` | no | aggregated allowlist | OpenCode bare ids plus strict `provider/model` ids. |
+| `PUBLIC_UPSTREAM_MODELS` | no | aggregated allowlist | Chat model allowlist (canonical `provider/model` ids). |
+| `PUBLIC_UPSTREAM_IMAGE_MODELS` | no | `pollinations/flux,pollinations/turbo,pollinations/zimage` | Image model allowlist for `POST /v1/images/generations`. |
 | `PUBLIC_UPSTREAM_TIMEOUT` | no | `20s` | Initial response timeout before another public route or authenticated fallback. |
 
 These are the same variables documented in
 [07 – Configuration & Usage](07-configuration-and-usage.md); the hosted app
-reads them from the deployment environment. The fixed public provider set (OpenCode Zen, keyless Pollinations, and Felo's
+reads them from the deployment environment. The fixed public provider set (OpenCode Zen, keyless Pollinations — chat and image generation — and Felo's
 reverse-engineered web protocol) is enabled by default for its explicit
-allowlist. OpenCode model ids are bare; Pollinations and Felo require strict
-`provider/model` namespaces. Set `PUBLIC_UPSTREAM_ENABLED=false` when
-prompts/code must stay on the authenticated Freebuff path. Public providers
-never receive downstream credentials, but they do receive the request body for
-routed models. Felo has no official API and may change without notice.
+allowlist. Every model id has a canonical `provider/model` form and a bare
+alias; bare aliases route by provider priority (Freebuff last). Set
+`PUBLIC_UPSTREAM_ENABLED=false` when prompts/code must stay on the
+authenticated Freebuff path. Public providers never receive downstream
+credentials, but they do receive the request body for routed models. Felo has
+no official API and may change without notice.
 
 ## Web login (per-user API keys)
 

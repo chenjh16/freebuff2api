@@ -112,12 +112,13 @@ Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 
 ## How it works
 
-For every chat request the proxy first checks the aggregated public model
-allowlist. OpenCode models keep their bare ids; Pollinations and Felo models
-use strict `pollinations/<model>` and `felo/<model>` namespaces. Public models
-are sent to the selected fixed provider without forwarding client credentials;
-set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes. Requests that
-use Freebuff-only models, or transient public-provider failures, use the
+Every model id has a canonical `provider/model` form (`freebuff/…`,
+`opencode/…`, `pollinations/…`, `felo/…`) **and** a bare alias without the
+provider prefix. Bare aliases are deduplicated and route by provider priority
+(`PUBLIC_UPSTREAM_PROVIDERS` order, Freebuff last). Public models are sent to
+the selected fixed provider without forwarding client credentials; set
+`PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes. Requests that use
+Freebuff-only models, or transient public-provider failures, use the
 authenticated Freebuff session path:
 
 1. **Acquires a free session** — `POST /api/v1/freebuff/session` with your
@@ -187,7 +188,8 @@ CLI option > `config.json` > environment variable**.
 | `PUBLIC_UPSTREAM_ENABLED` | `true`              | Fixed anonymous providers before Freebuff; set `false` to disable all public routes |
 | `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | Enabled fixed providers; arbitrary providers/URLs are rejected |
 | `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS base URL override; Pollinations/Felo endpoints remain fixed |
-| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | OpenCode bare ids plus strict `provider/model` ids; never arbitrary model ids |
+| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | Chat model allowlist (canonical `provider/model` ids); never arbitrary model ids |
+| `PUBLIC_UPSTREAM_IMAGE_MODELS` | `pollinations/flux,pollinations/turbo,pollinations/zimage` | Image models for `POST /v1/images/generations` (Pollinations, anonymous) |
 | `PUBLIC_UPSTREAM_TIMEOUT` | `20s`              | Initial response timeout before trying another public provider or Freebuff |
 
 See [`config.example.json`](config.example.json) and [`env.example`](env.example).
@@ -209,8 +211,9 @@ uses). Keep it secret — it grants API usage on your account.
 | GET    | `/healthz`               | Public liveness status                       |
 | GET    | `/v1/models`             | Models currently available in free mode      |
 | POST   | `/v1/chat/completions`   | OpenAI chat completions (streaming supported)|
+| POST   | `/v1/images/generations` | OpenAI image generation (Pollinations, anonymous, base64 results) |
 
-By default, the proxy aggregates three explicitly reviewed public routes: OpenCode Zen, keyless Pollinations, and Felo's reverse-engineered web protocol. OpenCode uses bare model ids; Pollinations and Felo require `provider/model` namespaces to prevent collisions. Set `PUBLIC_UPSTREAM_ENABLED=false` to use the authenticated Freebuff path only, or narrow `PUBLIC_UPSTREAM_PROVIDERS` / `PUBLIC_UPSTREAM_MODELS`. `PUBLIC_UPSTREAM_BASE_URL` can override only the allowlisted OpenCode host; Pollinations and Felo always use their fixed HTTPS endpoints. No downstream API keys, cookies, or Freebuff account tokens are forwarded. Timeout, 401, 408, 425, 429, and 5xx responses try another matching public route and then authenticated Freebuff; a normal 4xx is returned directly. The public routes receive prompts and code, and Felo has no official API, so review each provider's terms and privacy posture before deployment.
+By default, the proxy aggregates four explicitly reviewed public capabilities: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id has a canonical `provider/model` form plus a bare alias (`opencode/big-pickle` and `big-pickle`, `pollinations/openai` and `openai`, `felo/felo-chat` and `felo-chat`, `freebuff/<model>` and the bare id); bare aliases route by `PUBLIC_UPSTREAM_PROVIDERS` priority with Freebuff last. Set `PUBLIC_UPSTREAM_ENABLED=false` to use the authenticated Freebuff path only, or narrow `PUBLIC_UPSTREAM_PROVIDERS` / `PUBLIC_UPSTREAM_MODELS` / `PUBLIC_UPSTREAM_IMAGE_MODELS`. `PUBLIC_UPSTREAM_BASE_URL` can override only the allowlisted OpenCode host; Pollinations and Felo always use their fixed HTTPS endpoints. No downstream API keys, cookies, or Freebuff account tokens are forwarded. Timeout, 401, 408, 425, 429, and 5xx responses try another matching public route and then authenticated Freebuff; a normal 4xx is returned directly. The public routes receive prompts and code, and Felo has no official API, so review each provider's terms and privacy posture before deployment.
 
 Models are kept in sync with the official client by fetching
 `CodebuffAI/freebuff`'s `free-agents.ts` every 6 hours; a curated fallback
@@ -224,7 +227,7 @@ Freebuff hosting without a VPS:
 
 - **Domain:** `https://open.freebuff.app`
 - **Base URL:** `https://open.freebuff.app/v1`
-- **Endpoints:** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions`
+- **Endpoints:** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions` · `POST /v1/images/generations`
 - **Auth:** `Authorization: Bearer <API_KEYS entry>` (or `x-api-key`)
 
 Deployment environment:
@@ -398,7 +401,7 @@ curl http://localhost:23333/v1/chat/completions \
 
 ## 工作原理
 
-对每次 chat 请求，代理会先检查聚合公共模型白名单：OpenCode 保留裸模型 ID，Pollinations/Felo 必须使用严格的 `pollinations/<model>` 与 `felo/<model>` 命名空间，避免与 Freebuff 或其他 provider 冲突。默认启用固定 HTTPS 公共上游集合（OpenCode Zen、免 key 的 Pollinations、Felo 逆向网页协议适配），不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭全部公共链路。公共提供商按匹配模型尝试并在瞬态失败时回退认证链路。
+所有模型 ID 都同时提供 `provider/model` 规范形式（`freebuff/…`、`opencode/…`、`pollinations/…`、`felo/…`）与不带供应商前缀的裸别名；裸别名去重后按 `PUBLIC_UPSTREAM_PROVIDERS` 顺序（Freebuff 最后）路由。默认启用固定 HTTPS 公共上游集合（OpenCode Zen、免 key 的 Pollinations——含 chat 与图片生成、Felo 逆向网页协议适配），不转发下游凭证；设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭全部公共链路。公共提供商按匹配模型尝试并在瞬态失败时回退认证链路。
 
 Freebuff 的免费档按**会话（session）**发放。认证链路对每次 chat 请求：
 
@@ -460,7 +463,8 @@ bun run login -- --force            # 忽略已存凭证，重新登录
 | `MAX_CONCURRENT_REQUESTS` | `32`                   | 最大并发 chat 请求数                         |
 | `PUBLIC_UPSTREAM_ENABLED` | `true`                 | 默认启用固定公共上游（优先于 Freebuff）；设为 `false` 可关闭 |
 | `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | 允许的固定公共提供商；不接受任意 URL |
-| `PUBLIC_UPSTREAM_MODELS` | 聚合免认证模型白名单       | OpenCode 使用原始 ID，Pollinations/Felo 使用 `provider/model` 命名空间 |
+| `PUBLIC_UPSTREAM_MODELS` | 聚合免认证模型白名单       | chat 模型白名单（规范 `provider/model` ID），不接受任意模型 ID |
+| `PUBLIC_UPSTREAM_IMAGE_MODELS` | `pollinations/flux,pollinations/turbo,pollinations/zimage` | `POST /v1/images/generations` 的图片模型（Pollinations，匿名） |
 | `PUBLIC_UPSTREAM_TIMEOUT` | `20s`                 | 免认证上游首响应超时，之后回退 Freebuff |
 
 参见 [`config.example.json`](config.example.json) 与
@@ -480,8 +484,9 @@ token 是 freebuff.com 账号令牌（与浏览器会话一致）。请保密—
 | GET  | `/healthz`               | 公开存活状态（仅 liveness）                 |
 | GET  | `/v1/models`             | 免费模式当前可用的模型                     |
 | POST | `/v1/chat/completions`   | OpenAI chat completions（支持流式）        |
+| POST | `/v1/images/generations` | OpenAI 图片生成（Pollinations，匿名，返回 base64） |
 
-默认情况下，代理会优先尝试固定且受白名单限制的公共上游集合：OpenCode 使用裸模型 ID，Pollinations/Felo 使用严格的 `pollinations/<model>` 与 `felo/<model>` 命名空间。设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路；也可以用 `PUBLIC_UPSTREAM_PROVIDERS` 和 `PUBLIC_UPSTREAM_MODELS` 缩小范围。不会向公共上游转发下游 API Key、Cookie 或 Freebuff 账号 token；公共提供商按匹配模型尝试，超时、401、408、425、429、5xx 等瞬态失败才继续尝试其他公共 provider 或回退到 Freebuff，普通 4xx 直接返回。Pollinations 白名单只包含 OmniRoute 验证为无 key 可调用的模型，不包含 premium/可选 key 模型；Felo 是无官方 API 的逆向网页协议，可能随时变化。所有公共上游都会接收请求中的提示词和代码，部署前请确认服务条款与隐私要求。
+默认情况下，代理聚合四个经过实测的公共能力：OpenCode Zen、免 key 的 Pollinations（chat 与图片生成）、Felo 逆向网页协议适配。每个模型 ID 都有规范的 `provider/model` 形式与裸别名（`opencode/big-pickle` 与 `big-pickle`、`pollinations/openai` 与 `openai`、`felo/felo-chat` 与 `felo-chat`、`freebuff/<model>` 与裸 ID）；裸别名按 `PUBLIC_UPSTREAM_PROVIDERS` 优先级（Freebuff 最后）路由。设置 `PUBLIC_UPSTREAM_ENABLED=false` 可关闭并只使用 Freebuff 认证链路；也可以用 `PUBLIC_UPSTREAM_PROVIDERS`、`PUBLIC_UPSTREAM_MODELS` 与 `PUBLIC_UPSTREAM_IMAGE_MODELS` 缩小范围。不会向公共上游转发下游 API Key、Cookie 或 Freebuff 账号 token；公共提供商按匹配模型尝试，超时、401、408、425、429、5xx 等瞬态失败才继续尝试其他公共 provider 或回退到 Freebuff，普通 4xx 直接返回。Pollinations 白名单只包含实测无 key 可调用的模型（2026-08-08 实测：`gemini-flash-lite-3.1`、`perplexity-reasoning` 即使最简 prompt 也 401，已排除；其余模型对部分 prompt 形状也会返回 401，建议配合重试与 Freebuff 回退）。Felo 是无官方 API 的逆向网页协议，可能随时变化。所有公共上游都会接收请求中的提示词和代码，部署前请确认服务条款与隐私要求。
 
 模型列表与官方客户端保持同步：每 6 小时抓取 `CodebuffAI/freebuff` 的
 `free-agents.ts`；抓取失败时使用内置兜底映射，保证代理可用。
@@ -493,7 +498,7 @@ handler 挂到 `/v1` 上——无需 VPS，可直接部署到 Freebuff 托管：
 
 - **域名：** `https://open.freebuff.app`
 - **Base URL：** `https://open.freebuff.app/v1`
-- **端点：** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions`
+- **端点：** `GET /healthz` · `GET /v1/models` · `POST /v1/chat/completions` · `POST /v1/images/generations`
 - **鉴权：** `Authorization: Bearer <API_KEYS 中的某个 key>`（或 `x-api-key`）
 
 部署环境变量：

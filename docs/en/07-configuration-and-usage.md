@@ -51,7 +51,8 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 | `PUBLIC_UPSTREAM_ENABLED` | `true` | Fixed anonymous providers are enabled by default; set `false` to disable all public routes |
 | `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | Fixed provider ids; arbitrary providers are ignored |
 | `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS override; Pollinations/Felo endpoints remain fixed |
-| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | OpenCode bare ids plus strict `provider/model` ids |
+| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | Chat model allowlist (canonical `provider/model` ids); never arbitrary model ids |
+| `PUBLIC_UPSTREAM_IMAGE_MODELS` | `pollinations/flux,pollinations/turbo,pollinations/zimage` | Image model allowlist for `POST /v1/images/generations` (Pollinations, anonymous) |
 | `PUBLIC_UPSTREAM_TIMEOUT` | `20s` | Initial response timeout before another public route or authenticated fallback |
 | `USER_AGENT` | see below | Override the chat request User-Agent |
 | `DEBUG_UPSTREAM` | off | `1` prints upstream request details (token redacted) |
@@ -72,9 +73,11 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 ## Public anonymous provider
 
-The proxy aggregates three explicitly fixed routes before the authenticated Freebuff session path: OpenCode Zen, keyless Pollinations, and Felo's reverse-engineered web protocol. OpenCode keeps bare ids; Pollinations and Felo require strict `pollinations/<model>` and `felo/<model>` namespaces. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes, or narrow the provider/model lists. `PUBLIC_UPSTREAM_BASE_URL` is restricted to `opencode.ai` and never changes the fixed Pollinations/Felo destinations.
+The proxy aggregates four explicitly fixed capabilities before the authenticated Freebuff session path: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id has a canonical `provider/model` form plus a bare alias without the prefix (`opencode/big-pickle` ↔ `big-pickle`, `pollinations/openai` ↔ `openai`, `felo/felo-chat` ↔ `felo-chat`; Freebuff models are `freebuff/<model>` ↔ bare id). Bare aliases are deduplicated and route by `PUBLIC_UPSTREAM_PROVIDERS` priority, with Freebuff last. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes, or narrow the provider/model lists. `PUBLIC_UPSTREAM_BASE_URL` is restricted to `opencode.ai` and never changes the fixed Pollinations/Felo destinations.
 
-Public clients receive only the provider-specific body and headers. They do not receive downstream `Authorization`, `x-api-key`, cookies, or any Freebuff account token. A timeout, 401, 408, 425, 429, or 5xx response is treated as transient and tries another matching public route before authenticated fallback. A normal 4xx is returned directly. The Pollinations allowlist excludes premium/optional-key models. Felo has no official API and its web protocol may change. Prompts and code for allowlisted models are sent to the selected third parties; review their current terms and privacy requirements before deployment.
+`POST /v1/images/generations` serves the allowlisted image models through `image.pollinations.ai` (anonymous GET). It accepts OpenAI image params: `model`, `prompt`, `size` (`WxH`, clamped 256–2048, multiple of 8), `n` (1–4), `seed`, and `response_format` (`url` data-URI or `b64_json`; both fields are returned). Anonymous results carry the Pollinations logo (`nologo` requires an account and is never sent).
+
+Public clients receive only the provider-specific body and headers. They do not receive downstream `Authorization`, `x-api-key`, cookies, or any Freebuff account token. A timeout, 401, 408, 425, 429, or 5xx response is treated as transient and tries another matching public route before authenticated fallback (image requests surface the failure directly — there is no authenticated image path). A normal 4xx is returned directly. The Pollinations allowlist excludes premium/optional-key models (verified live 2026-08-08: `gemini-flash-lite-3.1` and `perplexity-reasoning` return 401 even for a minimal prompt). Note that Pollinations' anonymous chat tier rejects certain prompt shapes with 401 (e.g. "Reply with exactly: …"); benign prompts work, and the proxy's transient-status fallback/retry covers the rest. Felo has no official API and its web protocol may change. Prompts and code for allowlisted models are sent to the selected third parties; review their current terms and privacy requirements before deployment.
 
 When the public route is enabled, the standalone CLI may start without `AUTH_TOKENS` and can serve allowlisted public models. `AUTH_TOKENS` (or saved login credentials) is still needed for Freebuff-only models and fallback capacity. If the public provider fails without a configured token, the proxy returns a clear retryable error rather than crashing.
 
@@ -102,6 +105,7 @@ When the public route is enabled, the standalone CLI may start without `AUTH_TOK
 | GET | `/healthz` | Public liveness status |
 | GET | `/v1/models` | Available models (OpenAI format) |
 | POST | `/v1/chat/completions` | Chat (streaming / non-streaming) |
+| POST | `/v1/images/generations` | Image generation (Pollinations, anonymous) |
 
 ## Deployment notes
 

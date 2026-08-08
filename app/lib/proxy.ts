@@ -113,6 +113,7 @@ async function buildHandler(): Promise<(request: Request) => Promise<Response>> 
     ? createPublicUpstreamRouter({
         providers: cfg.publicUpstreamProviders,
         models: cfg.publicUpstreamModels,
+        imageModels: cfg.publicUpstreamImageModels,
         baseURL: cfg.publicUpstreamBaseURL,
         timeoutMs: cfg.publicUpstreamTimeoutMs,
       })

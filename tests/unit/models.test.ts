@@ -95,4 +95,23 @@ describe("ModelRegistry", () => {
     models.push("mutated");
     expect(registry.models()).toEqual([]);
   });
+
+  test("accepts the freebuff/ namespace prefix and canonicalizes it", async () => {
+    const registry = new ModelRegistry(
+      async () => {
+        throw new Error("network offline");
+      },
+      () => {},
+    );
+    await registry.start();
+    expect(registry.hasModel(`freebuff/deepseek/deepseek-v4-flash`)).toBe(true);
+    expect(registry.agentForModel(`freebuff/deepseek/deepseek-v4-flash`)).toBe("base2-free-deepseek-flash");
+    expect(registry.canonicalModel(`freebuff/deepseek/deepseek-v4-flash`)).toBe("deepseek/deepseek-v4-flash");
+    expect(registry.canonicalModel("deepseek/deepseek-v4-flash")).toBe("deepseek/deepseek-v4-flash");
+    // A registry id that merely starts with another namespace is untouched.
+    expect(registry.hasModel(`freebuff/z-ai/glm-5.2`)).toBe(true);
+    expect(registry.agentForModel(`freebuff/z-ai/glm-5.2`)).toBe("base2-free-glm");
+    expect(registry.hasModel("freebuff/openai/gpt-5.6-luna")).toBe(true);
+    registry.stop();
+  });
 });

@@ -93,11 +93,28 @@ export class ModelRegistry {
   }
 
   hasModel(model: string): boolean {
-    return this.modelToAgent.has(model);
+    return this.modelToAgent.has(this.unprefix(model));
   }
 
   agentForModel(model: string): string | undefined {
-    return this.modelToAgent.get(model);
+    return this.modelToAgent.get(this.unprefix(model));
+  }
+
+  /**
+   * Resolve a possibly prefixed id (`freebuff/<model>`) to its bare registry id
+   * that the upstream session/run APIs expect.
+   */
+  canonicalModel(model: string): string {
+    return this.unprefix(model);
+  }
+
+  /**
+   * Freebuff models are addressed as `freebuff/<model>` or by their bare id.
+   * Registry ids may themselves contain slashes (e.g. `deepseek/deepseek-v4-flash`),
+   * so only the exact `freebuff/` namespace is stripped.
+   */
+  private unprefix(model: string): string {
+    return model.startsWith("freebuff/") ? model.slice("freebuff/".length) : model;
   }
 
   agentIds(): string[] {
