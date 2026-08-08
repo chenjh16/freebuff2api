@@ -49,6 +49,7 @@ Environment/configuration:
   MAX_CONCURRENT_REQUESTS    default 32
   PUBLIC_UPSTREAM_ENABLED     default true; set false to disable public providers
   PUBLIC_UPSTREAM_PROVIDERS    comma-separated fixed providers: opencode,pollinations,felo
+  PUBLIC_UPSTREAM_BASE_URL     OpenCode-only HTTPS override (default https://opencode.ai/zen/v1)
   PUBLIC_UPSTREAM_MODELS      comma-separated aggregated public model allowlist
   PUBLIC_UPSTREAM_IMAGE_MODELS comma-separated public image model allowlist
   PUBLIC_UPSTREAM_TIMEOUT     default 20s
@@ -86,7 +87,6 @@ export function parseArgs(args: string[]): CLIOptions {
       case "--max-body-size": options.maxBodySize = requireValue(args, i++, arg); break;
       case "--max-concurrent": options.maxConcurrentRequests = requireValue(args, i++, arg); break;
       case "--config": options.configPath = requireValue(args, i++, arg); break;
-      case "--help": case "-h": case "help": break;
       default: throw new Error(`unknown option: ${arg}`);
     }
   }

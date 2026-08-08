@@ -85,6 +85,26 @@ describe("ModelRegistry", () => {
     registry.stop();
   });
 
+  test("serves the fallback catalog before the first remote refresh completes", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchFn = async (url: string) => {
+      await gate;
+      return new Response(url.includes("free-agents.ts") ? AGENT_SRC : CONSTANTS_SRC, { status: 200 });
+    };
+    const registry = new ModelRegistry(fetchFn, () => {});
+    const started = registry.start();
+    // Fallback models are routable immediately, before the fetch resolves.
+    expect(registry.status().source).toBe("fallback");
+    expect(registry.hasModel("freebuff/deepseek/deepseek-v4-flash")).toBe(true);
+    release();
+    await started;
+    expect(registry.status().source).toBe("remote");
+    registry.stop();
+  });
+
   test("falls back when the remote source parses to zero agents", async () => {
     const fetchFn = async () => new Response("export const nothing = 1;", { status: 200 });
     const registry = new ModelRegistry(fetchFn, () => {});

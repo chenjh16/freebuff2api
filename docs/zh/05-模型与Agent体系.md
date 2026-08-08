@@ -56,6 +56,9 @@ freebuff2api 启动时抓取该文件（及其 import 的常量文件），解�
 | `file-picker` / `file-picker-max` / `file-lister` / `researcher-web` / `researcher-docs` / `basher` | `google/gemini-3.5-flash-lite` |
 | `editor-lite` / `code-reviewer-lite` | `minimax/minimax-m3` |
 
+> `base2-free-fable` → `anthropic/claude-fable-5` **仅远程可用**：离线兜底
+> 映射不含 fable，只有成功从上游拉取目录后才可用。
+
 ## Agent 定义的组成（tools/captured/agentdefs-full.json）
 
 官方 CLI 上报的 Agent 定义包含（以 `base2-free-deepseek-flash` 为例）：
@@ -94,7 +97,7 @@ freebuff2api 启动时抓取该文件（及其 import 的常量文件），解�
 
 ## 当前支持与可用性探测
 
-内置兜底列表当前包含以下可供 `/v1/models` 广告和路由的模型：
+内置兜底列表当前覆盖以下 Freebuff **注册表**模型 ID：
 
 - `deepseek/deepseek-v4-pro`
 - `deepseek/deepseek-v4-flash`
@@ -104,8 +107,10 @@ freebuff2api 启动时抓取该文件（及其 import 的常量文件），解�
 - `z-ai/glm-5.2`
 - `google/gemini-3.5-flash-lite`
 
-启动时若能访问官方仓库，实际列表以远程解析结果为准；因此 `/v1/models`
-表示“已知/可路由”，不保证当前会话额度或上游实例一定可用。
+在代理表面上，每个模型只以带命名空间的形式 `freebuff/<model>`（如
+`freebuff/deepseek/deepseek-v4-flash`）被广告与路由；裸注册表 ID 既不会被
+列出也不可路由。启动时若能访问官方仓库，实际列表以远程解析结果为准；因此
+`/v1/models` 表示“已知/可路由”，不保证当前会话额度或上游实例一定可用。
 
 全面探测每个已广告模型会真实调用 chat 并消耗额度：
 

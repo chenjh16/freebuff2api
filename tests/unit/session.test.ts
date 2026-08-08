@@ -26,6 +26,17 @@ describe("TokenManager session failover", () => {
     expect(calls).toEqual(["bad", "good"]);
   });
 
+  test("reports a clear error when no upstream tokens are configured", async () => {
+    const client = {
+      createOrRefreshSession: async () => active("unused"),
+      getSession: async () => active("unused"),
+    };
+    const manager = new TokenManager([], client as never, () => {});
+    await expect(manager.acquireSession("deepseek/deepseek-v4-flash")).rejects.toThrow(
+      /no upstream tokens configured/,
+    );
+  });
+
   test("does not fail over waiting-room responses", async () => {
     const calls: string[] = [];
     const client = {

@@ -14,7 +14,6 @@ export const FREE_SESSION_POLL_INTERVAL_MS = 5_000;
 /** Cooldown applied to a token after the upstream rejects it with 401. */
 export const TOKEN_COOLDOWN_MS = 30 * 60_000;
 
-const QUEUED_STATUSES = new Set(["queued"]);
 const ENDED_STATUSES = new Set(["none", "ended", "superseded"]);
 
 export class WaitingRoomError extends Error {
@@ -147,14 +146,10 @@ export class SessionPool {
   private async refresh(model?: string, signal?: AbortSignal): Promise<CachedSession | null> {
     const current = this.session;
     let state: FreebuffSessionResponse;
-    try {
-      if (current && current.status === "queued" && current.instanceId) {
-        state = await this.client.getSession(this.token, current.instanceId, { model, signal });
-      } else {
-        state = await this.client.createOrRefreshSession(this.token, { model, signal });
-      }
-    } catch (error) {
-      throw error;
+    if (current && current.status === "queued" && current.instanceId) {
+      state = await this.client.getSession(this.token, current.instanceId, { model, signal });
+    } else {
+      state = await this.client.createOrRefreshSession(this.token, { model, signal });
     }
 
     for (;;) {
@@ -179,8 +174,6 @@ export class SessionPool {
         }
         case ENDED_STATUSES.has(status):
           state = await this.client.createOrRefreshSession(this.token, { model, signal });
-          continue;
-        case QUEUED_STATUSES.has(status): // unreachable; kept for clarity
           continue;
         default:
           // Terminal/odd statuses (country_blocked, banned, model_locked,
@@ -261,6 +254,9 @@ export class TokenManager {
    * on cooldown.
    */
   private pickPool(): SessionPool {
+    if (this.pools.length === 0) {
+      throw new Error("no upstream tokens configured (set AUTH_TOKENS or run `freebuff2api login`)");
+    }
     const now = Date.now();
     for (let i = 0; i < this.pools.length; i++) {
       const pool = this.pools[(this.nextIndex + i) % this.pools.length];

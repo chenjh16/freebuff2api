@@ -30,7 +30,7 @@ Point any OpenAI-compatible client at `http://localhost:23333/v1`.
 ## Configuration priority
 
 ```
-General: environment variables > config.json (cwd or ~/.freebuff2api/) > login credentials > defaults; HTTP_PROXY: `--http-proxy` CLI > config.json > environment
+General: environment variables > config.json (cwd, then ~/.config/freebuff2api/, then legacy ~/.freebuff2api/) > login credentials > defaults; HTTP_PROXY: `--http-proxy` CLI > config.json > environment
 ```
 
 ## Environment variables
@@ -45,13 +45,15 @@ General: environment variables > config.json (cwd or ~/.freebuff2api/) > login c
 | `ROTATION_INTERVAL` | `6h` | Run rotation interval |
 | `API_KEYS` | empty = open in standalone; hosted empty = fail closed | Explicit keys clients must present; configure high-entropy values for hosted deployments |
 | `SITE_ACCESS_TOKEN` | empty = gate off | Hosted web console gate token(s), comma-separated. When set, visitors must present one (typed into the lock screen, or via `?token=…`) to unlock the site |
+| `PROXY_SECRET` | auto (see 08) | Stable secret that encrypts web-login API keys (`sk-fb-…`); set a fixed value so keys survive redeploys (hosted app only) |
+| `PROXY_SECRET_FILE` | `.data/proxy-secret` | Where the fallback secret is persisted when no env secret is set (hosted app only) |
 | `HTTP_PROXY` | empty | Upstream HTTP(S) proxy; precedence is `--http-proxy` > config.json > environment |
 | `MAX_BODY_SIZE` | `16MB` | Maximum chat request body (16,000,000 bytes) |
 | `MAX_CONCURRENT_REQUESTS` | `32` | Maximum in-flight chat requests |
 | `PUBLIC_UPSTREAM_ENABLED` | `true` | Fixed anonymous providers are enabled by default; set `false` to disable all public routes |
 | `PUBLIC_UPSTREAM_PROVIDERS` | `opencode,pollinations,felo` | Fixed provider ids; arbitrary providers are ignored |
 | `PUBLIC_UPSTREAM_BASE_URL` | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS override; Pollinations/Felo endpoints remain fixed |
-| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | Chat model allowlist (canonical `provider/model` ids); never arbitrary model ids |
+| `PUBLIC_UPSTREAM_MODELS` | aggregated allowlist | Chat model allowlist — canonical `provider/model` ids; never arbitrary model ids (OpenCode entries may keep their historical bare ids for backward compatibility) |
 | `PUBLIC_UPSTREAM_IMAGE_MODELS` | `pollinations/flux,pollinations/turbo,pollinations/zimage` | Image model allowlist for `POST /v1/images/generations` (Pollinations, anonymous) |
 | `PUBLIC_UPSTREAM_TIMEOUT` | `20s` | Initial response timeout before another public route or authenticated fallback |
 | `USER_AGENT` | see below | Override the chat request User-Agent |
@@ -75,7 +77,7 @@ ai-sdk/openai-compatible/0.10.7/codebuff ai-sdk/provider-utils/3.0.25 runtime/br
 
 The proxy aggregates four explicitly fixed capabilities before the authenticated Freebuff session path: OpenCode Zen, keyless Pollinations (chat **and** image generation), and Felo's reverse-engineered web protocol. Every model id is provider-namespaced (`opencode/big-pickle`, `pollinations/openai`, `felo/felo-chat`; Freebuff models are `freebuff/<model>`); unprefixed ids are neither listed nor routable. Set `PUBLIC_UPSTREAM_ENABLED=false` to disable all public routes, or narrow the provider/model lists. `PUBLIC_UPSTREAM_BASE_URL` is restricted to `opencode.ai` and never changes the fixed Pollinations/Felo destinations.
 
-`POST /v1/images/generations` serves the allowlisted image models through `image.pollinations.ai` (anonymous GET). It accepts OpenAI image params: `model`, `prompt`, `size` (`WxH`, clamped 256–2048, multiple of 8), `n` (1–4), `seed`, and `response_format` (`url` data-URI or `b64_json`; both fields are returned). Anonymous results carry the Pollinations logo (`nologo` requires an account and is never sent).
+`POST /v1/images/generations` serves the allowlisted image models through `image.pollinations.ai` (anonymous GET). It accepts OpenAI image params: `model`, `prompt`, `size` (`WxH`, clamped 256–2048, multiple of 8), `n` (1–4), `seed`, and `response_format` (`url` data-URI or `b64_json`; both fields are returned). Anonymous results carry the Pollinations logo (`nologo` requires an account and is never sent). Image generation uses its own **≥60s** per-image timeout, independent of `PUBLIC_UPSTREAM_TIMEOUT` (default 20s), because anonymous image rendering is slower than chat.
 
 Public clients receive only the provider-specific body and headers. They do not receive downstream `Authorization`, `x-api-key`, cookies, or any Freebuff account token. A timeout, 401, 408, 425, 429, or 5xx response is treated as transient and tries another matching public route before authenticated fallback (image requests surface the failure directly — there is no authenticated image path). A normal 4xx is returned directly. The Pollinations allowlist excludes premium/optional-key models (verified live 2026-08-08: `gemini-flash-lite-3.1` and `perplexity-reasoning` return 401 even for a minimal prompt). Note that Pollinations' anonymous chat tier rejects certain prompt shapes with 401 (e.g. "Reply with exactly: …"); benign prompts work, and the proxy's transient-status fallback/retry covers the rest. Felo has no official API and its web protocol may change. Prompts and code for allowlisted models are sent to the selected third parties; review their current terms and privacy requirements before deployment.
 
@@ -110,7 +112,7 @@ When the public route is enabled, the standalone CLI may start without `AUTH_TOK
 ## Deployment notes
 
 - With the default public provider enabled, the standalone CLI can serve allowlisted OpenCode models without `AUTH_TOKENS`; configure `AUTH_TOKENS` or saved `freebuff2api login` credentials for Freebuff-only models and authenticated fallback. If `PUBLIC_UPSTREAM_ENABLED=false`, the standalone CLI requires a token. `AUTH_TOKENS` remains optional for the hosted Next.js app because each visitor can use web login and a personal `sk-fb-*` key.
-- Hosted `/v1` fails closed when `API_KEYS` is unset; provision an explicit high-entropy value before exposing the endpoint.
+- Hosted `/v1` fails closed when `API_KEYS` is unset (web-login `sk-fb-…` keys still work); provision an explicit high-entropy value before exposing the endpoint.
 - Build artifact: `bun run build:cli` → `dist/index.js` (pointed to by
   `bin.freebuff2api` in `package.json`)
 - Production (hosted): hosting detects the Next.js app and builds it with

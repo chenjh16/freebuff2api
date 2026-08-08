@@ -29,7 +29,10 @@ interface PendingLogin {
 const SESSION_KEY = "freebuff2api_session";
 const PENDING_KEY = "freebuff2api_pending";
 const GATE_KEY = "freebuff2api_site_token";
-const DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
+// Default to the public OpenCode Zen channel model: it needs no Freebuff
+// account token, so the playground works for a signed-out visitor the moment
+// the model list loads (and stays valid once the page switches to ids[0]).
+const DEFAULT_MODEL = "opencode/deepseek-v4-flash-free";
 
 function uuid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();

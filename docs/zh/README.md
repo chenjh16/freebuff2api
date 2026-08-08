@@ -49,7 +49,7 @@
 ## 验证状态
 
 - ✅ `bun run typecheck`（tsc -b --noEmit）通过
-- ✅ 156 个单元测试通过（`bun test tests/unit`），覆盖配置、公共上游安全
+- ✅ 158 个单元测试通过（`bun test tests/unit`），覆盖配置、公共上游安全
   （前缀路由、图片客户端、供应商优先级）、模型注册表（含 `freebuff/` 前缀）、
   run 管理、会话准入（409/503/429 分类）与服务器接口（含
   `/v1/images/generations`）
@@ -58,7 +58,8 @@
   部署到 `open.freebuff.app` 的应用——见
   [08-托管部署](08-托管部署.md)
 - ✅ 端到端测试：认证链路的流式 + 非流式 chat 均返回 200 与真实回复；
-  5 个非 live E2E 通过（其余 live 用例按环境变量开启）
+  E2E 全部按真实凭证/环境变量门控（认证套件需 `CREDS_OK`，公共上游套件需
+  `LIVE_PUBLIC_UPSTREAM_TEST=1`，模型可用性套件需 `LIVE_MODEL_TEST`）
 - ✅ 公共上游实时 E2E（`LIVE_PUBLIC_UPSTREAM_TEST=1`，需要显式开启以避免
   普通测试依赖外部网络）：全部默认公共模型经代理验证——OpenCode chat（4）、
   Pollinations chat（8）、Felo chat（5）走 `/v1/chat/completions`，

@@ -34,20 +34,6 @@ function log(message: string): void {
   console.log(`[freebuff2api] ${message}`);
 }
 
-/**
- * Resolve the proxy API keys from the environment, falling back to the hosted
- * environment. An unset value intentionally produces an empty list: hosted
- * web-login keys are resolved separately, while shared keys must be explicitly
- * provisioned rather than relying on a predictable public credential.
- */
-export function resolveApiKeys(env: Record<string, string | undefined>): string[] {
-  const raw = env.API_KEYS;
-  if (raw && raw.trim()) {
-    return [...new Set(raw.split(/[,;\n\r]/).map((item) => item.trim()).filter((item) => item.length > 0))];
-  }
-  return [];
-}
-
 let handlerPromise: Promise<(request: Request) => Promise<Response>> | null = null;
 
 /**
@@ -106,7 +92,10 @@ async function buildHandler(): Promise<(request: Request) => Promise<Response>> 
   }
 
   const registry = new ModelRegistry(fetch, log);
-  await registry.start();
+  // Cold-start friendly: start() loads the curated fallback immediately and
+  // refreshes from upstream in the background, so the first request is never
+  // blocked on model catalog fetches.
+  void registry.start().catch((error) => log(`[models] startup failed: ${String(error)}`));
   const tokens = new TokenManager(cfg.authTokens, client, log);
   const runs = new RunManager(client, cfg.rotationIntervalMs, log);
   const publicUpstream = cfg.publicUpstreamEnabled

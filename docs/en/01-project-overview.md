@@ -59,7 +59,7 @@ tools/           debugging & analysis scripts (see tools/README.md)
 | `login.ts` | `freebuff2api login` command; credentials saved to `~/.config/freebuff2api/credentials.json` |
 | `config.ts` | Parses env / config.json / login credentials into a unified `Config` |
 | `upstream.ts` | Authenticated Freebuff session/run/chat calls; `DEBUG_UPSTREAM=1` prints plaintext requests |
-| `public-upstream.ts` | Fixed-host OpenCode/Pollinations/Felo adapters (chat + image), canonical id/alias catalog, model allowlist, credential isolation, timeout and fallback classification |
+| `public-upstream.ts` | Fixed-host OpenCode/Pollinations/Felo adapters (chat + image), prefixed model catalog, model allowlist, credential isolation, timeout and fallback classification |
 | `session.ts` | One `SessionPool` per token; `TokenManager` handles rotation and cooldown |
 | `runs.ts` | `RunManager` caches runId per (token, agent), rotates when expired |
 | `models.ts` | Fetches the official `free-agents.ts` from GitHub and parses the Agent→model mapping (6h refresh) |

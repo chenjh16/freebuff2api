@@ -14,7 +14,7 @@
 | Sign in in the browser | ✅ prints `Login successful! Return to your terminal to continue.` |
 | Poll returns the user record | ✅ `name/email/authToken` all present |
 | Credentials persisted | ✅ `credentials.json` (`default` key) |
-| Server auto-uses credentials | ✅ `acting_user_id` in `/healthz` is the logged-in user's id |
+| Server auto-uses credentials | ✅ saved token authenticates upstream requests via `Authorization: Bearer`; user id sent as `x-freebuff-acting-user-id` |
 
 Known pitfalls:
 

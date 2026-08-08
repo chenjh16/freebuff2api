@@ -615,6 +615,43 @@ describe("Server HTTP surface", () => {
     }
   });
 
+  test("rejects with 503 request_queue_full when the waiting queue is saturated", async () => {
+    // One request holds the only slot while 128 more wait in the queue; the
+    // 130th request must be told the queue is full (not "server is shutting
+    // down"). The slot holder resolves after a short delay so the test ends.
+    const ok = new Response('{"id":"x","choices":[{"message":{"role":"assistant","content":"hi"}}]}', {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const harness = makeFullHarness({
+      maxConcurrentRequests: 1,
+      chatHandler: (_body, call) => {
+        if (call === 1) {
+          return new Promise<Response>((resolve) => setTimeout(() => resolve(ok), 150));
+        }
+        return ok;
+      },
+    });
+    const started = await harness.start();
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 130 }, () =>
+          chatPost(started.base, { model: FB_MODEL, messages: [{ role: "user", content: "hi" }] }),
+        ),
+      );
+      const codes = await Promise.all(
+        results.map(async (r) => {
+          const body = (await r.clone().json().catch(() => ({}))) as { error?: { code?: string } };
+          return body.error?.code ?? "";
+        }),
+      );
+      expect(codes.filter((code) => code === "request_queue_full")).toHaveLength(1);
+      expect(codes.some((code) => code === "server_closing")).toBe(false);
+    } finally {
+      await started.server.close();
+    }
+  });
+
   test("preserves terminal model admission errors instead of masking them as 503", async () => {
     const modelHarness = makeFullHarness({
       acquireSession: async () => {

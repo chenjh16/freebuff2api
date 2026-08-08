@@ -73,14 +73,19 @@ export class ModelRegistry {
   ) {}
 
   async start(): Promise<void> {
-    const ok = await this.refresh();
-    if (!ok) this.loadFallback();
+    // Serve the curated fallback catalog immediately so /v1/models and model
+    // routing work before the first upstream fetch completes (also during
+    // hosted cold starts, where buildHandler no longer awaits start()). The
+    // remote mapping fully replaces it once the first refresh succeeds.
+    this.loadFallback();
     this.timer = setInterval(() => {
       void this.refresh().then((succeeded) => {
         if (!succeeded) this.log("[models] refresh failed; keeping current mapping");
       });
     }, REFRESH_INTERVAL_MS);
     if (typeof this.timer.unref === "function") this.timer.unref();
+    const ok = await this.refresh();
+    if (!ok) this.log("[models] startup refresh failed; keeping fallback mapping");
   }
 
   stop(): void {
@@ -156,7 +161,17 @@ export class ModelRegistry {
         this.log("[models] parsed 0 agents from upstream source; using fallback");
         return false;
       }
+      const before = new Set(this.allModels);
       this.applyMapping(agentModels, "remote");
+      const added = [...this.allModels].filter((model) => !before.has(model));
+      const removed = [...before].filter((model) => !this.allModels.includes(model));
+      if (added.length > 0 || removed.length > 0) {
+        this.log(
+          `[models] catalog changed: +${added.length} -${removed.length} (${this.allModels.length} total)` +
+            `${added.length > 0 ? ` added: ${added.slice(0, 6).join(", ")}` : ""}` +
+            `${removed.length > 0 ? ` removed: ${removed.slice(0, 6).join(", ")}` : ""}`,
+        );
+      }
       this.log(
         `[models] updated ${agentModels.size} agents, ${this.allModels.length} models: ${this.allModels.slice(0, 12).join(", ")}${this.allModels.length > 12 ? ", …" : ""}`,
       );

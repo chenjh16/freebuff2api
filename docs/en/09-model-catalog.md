@@ -95,7 +95,7 @@ Response:
 { "created": 1786000000, "data": [{ "url": "data:image/jpeg;base64,...", "b64_json": "..." }] }
 ```
 
-Notes: the upstream call is `GET image.pollinations.ai/prompt/<prompt>?width=…&height=…&seed=…&model=…&format=jpeg` with no credentials. `nologo` (watermark removal) requires an account token and is intentionally never sent — anonymous results carry the Pollinations logo. Images are fetched synchronously and base64-encoded before responding, so latency scales with generation time.
+Notes: the upstream call is `GET image.pollinations.ai/prompt/<prompt>?width=…&height=…&seed=…&model=…&format=jpeg` with no credentials. `nologo` (watermark removal) requires an account token and is intentionally never sent — anonymous results carry the Pollinations logo. Images are fetched synchronously and base64-encoded before responding, so latency scales with generation time. Image generation uses its own **≥60s** per-image timeout, independent of `PUBLIC_UPSTREAM_TIMEOUT` (default 20s), because anonymous image rendering is slower than chat.
 
 ## Streaming compatibility (strict clients)
 

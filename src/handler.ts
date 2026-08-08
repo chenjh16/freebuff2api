@@ -13,14 +13,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Config } from "./config.ts";
+import { DEFAULT_MAX_BODY_BYTES, type Config } from "./config.ts";
 import type { ModelRegistry } from "./models.ts";
 import type { RunManager } from "./runs.ts";
 import { TOKEN_COOLDOWN_MS, WaitingRoomError, tokenLabel, type TokenManager } from "./session.ts";
 import { UpstreamError, type UpstreamClient } from "./upstream.ts";
 import { isPublicUpstreamFallbackStatus, type PublicUpstreamRouterLike } from "./public-upstream.ts";
 
-export const DEFAULT_MAX_BODY_BYTES = 16_000_000;
+export { DEFAULT_MAX_BODY_BYTES };
 
 const SESSION_INVALID_ERRORS = new Set([
   "freebuff_update_required",
@@ -177,31 +177,9 @@ async function chatCompletions(deps: HandlerDeps, request: Request): Promise<Res
 
   const signal = request.signal;
   const maxBodyBytes = deps.cfg.maxBodyBytes || DEFAULT_MAX_BODY_BYTES;
-  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
-    return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
-  }
-
-  let rawBody: string;
-  try {
-    rawBody = await readBodyLimited(request, maxBodyBytes, signal);
-  } catch (error) {
-    if (error instanceof BodyTooLargeError) {
-      return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
-    }
-    if (signal.aborted) {
-      return openAIError(499, "client closed request", "server_error", "");
-    }
-    throw error;
-  }
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(rawBody) as Record<string, unknown>;
-  } catch {
-    return openAIError(400, "request body must be valid JSON", "invalid_request_error", "");
-  }
-
+  const parsed = await readJsonBody(request, maxBodyBytes, signal);
+  if (parsed instanceof Response) return parsed;
+  const { payload, rawBody } = parsed;
   const requestedModel = typeof payload.model === "string" ? payload.model.trim() : "";
   if (!requestedModel) {
     return openAIError(400, "model is required", "invalid_request_error", "");
@@ -343,31 +321,9 @@ async function imageGenerations(deps: HandlerDeps, request: Request): Promise<Re
 
   const signal = request.signal;
   const maxBodyBytes = deps.cfg.maxBodyBytes || DEFAULT_MAX_BODY_BYTES;
-  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
-    return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
-  }
-
-  let rawBody: string;
-  try {
-    rawBody = await readBodyLimited(request, maxBodyBytes, signal);
-  } catch (error) {
-    if (error instanceof BodyTooLargeError) {
-      return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
-    }
-    if (signal.aborted) {
-      return openAIError(499, "client closed request", "server_error", "");
-    }
-    throw error;
-  }
-
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(rawBody) as Record<string, unknown>;
-  } catch {
-    return openAIError(400, "request body must be valid JSON", "invalid_request_error", "");
-  }
-
+  const parsed = await readJsonBody(request, maxBodyBytes, signal);
+  if (parsed instanceof Response) return parsed;
+  const { payload, rawBody } = parsed;
   const requestedModel = typeof payload.model === "string" ? payload.model.trim() : "";
   if (!requestedModel) {
     return openAIError(400, "model is required", "invalid_request_error", "");
@@ -473,10 +429,44 @@ function openAIError(
   return new Response(JSON.stringify({ error }), { status: statusCode, headers });
 }
 
-class BodyTooLargeError extends Error {
+export class BodyTooLargeError extends Error {
   constructor() {
     super("request body too large");
     this.name = "BodyTooLargeError";
+  }
+}
+
+/**
+ * Read and parse a JSON request body with the shared size/abort/JSON guards
+ * used by the chat and image endpoints. Returns the parsed payload plus the
+ * raw body string, or an OpenAI error Response (413/499/400) when the body is
+ * rejected.
+ */
+async function readJsonBody(
+  request: Request,
+  maxBodyBytes: number,
+  signal: AbortSignal,
+): Promise<{ payload: Record<string, unknown>; rawBody: string } | Response> {
+  const declaredLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
+    return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
+  }
+  let rawBody: string;
+  try {
+    rawBody = await readBodyLimited(request, maxBodyBytes, signal);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) {
+      return openAIError(413, `request body exceeds ${maxBodyBytes} bytes`, "invalid_request_error", "body_too_large");
+    }
+    if (signal.aborted) {
+      return openAIError(499, "client closed request", "server_error", "");
+    }
+    throw error;
+  }
+  try {
+    return { payload: JSON.parse(rawBody) as Record<string, unknown>, rawBody };
+  } catch {
+    return openAIError(400, "request body must be valid JSON", "invalid_request_error", "");
   }
 }
 
@@ -543,6 +533,14 @@ function injectUpstreamMetadata(
 ): string {
   const cloned: Record<string, unknown> = { ...payload };
   cloned.model = model;
+  // Clone the messages array (and each message) so marker/metadata injection
+  // never mutates the caller's parsed payload; messages may contain arrays of
+  // content parts, which stay shared (we only touch role/content at top level).
+  if (Array.isArray(payload.messages)) {
+    cloned.messages = payload.messages.map((message) =>
+      message && typeof message === "object" ? { ...(message as Record<string, unknown>) } : message,
+    );
+  }
 
   const metadata: Record<string, string> = {
     run_id: runId,

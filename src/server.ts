@@ -12,7 +12,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createHandler, DEFAULT_MAX_BODY_BYTES, type HandlerDeps } from "./handler.ts";
+import { createHandler, DEFAULT_MAX_BODY_BYTES, BodyTooLargeError, type HandlerDeps } from "./handler.ts";
 import type { Config } from "./config.ts";
 import type { ModelRegistry } from "./models.ts";
 import type { RunManager } from "./runs.ts";
@@ -74,8 +74,17 @@ export class Server {
     let release: () => void;
     try {
       release = await this.acquireRequestSlot();
-    } catch {
-      writeOpenAIError(res, 503, "server is shutting down", "server_error", "server_closing");
+    } catch (error) {
+      // Distinguish a shutdown from an overloaded request queue so clients get
+      // an actionable status instead of a misleading "shutting down".
+      const queueFull = error instanceof Error && /queue/i.test(error.message);
+      writeOpenAIError(
+        res,
+        503,
+        queueFull ? "too many concurrent requests, try again" : "server is shutting down",
+        "server_error",
+        queueFull ? "request_queue_full" : "server_closing",
+      );
       req.resume();
       return;
     }
@@ -92,6 +101,9 @@ export class Server {
       const response = await this.handle(request);
       await writeResponse(res, response, abort.signal);
     } catch (error) {
+      // 413 responses are already written by toWebRequest before it throws;
+      // nothing to log or recover from.
+      if (error instanceof ResponseSentError) return;
       this.deps.log(`[server] unhandled error: ${String(error)}`);
       if (!res.headersSent) {
         writeOpenAIError(res, 500, "internal server error", "server_error", "");
@@ -262,13 +274,6 @@ class ResponseSentError extends Error {
   constructor() {
     super("response already sent");
     this.name = "ResponseSentError";
-  }
-}
-
-class BodyTooLargeError extends Error {
-  constructor() {
-    super("request body too large");
-    this.name = "BodyTooLargeError";
   }
 }
 

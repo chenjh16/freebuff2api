@@ -205,6 +205,23 @@ describe("loadConfig", () => {
     expect(loadConfig().publicUpstreamEnabled).toBe(false);
   });
 
+  test("skips public upstream URL validation when the public route is disabled", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.PUBLIC_UPSTREAM_ENABLED = "false";
+    process.env.PUBLIC_UPSTREAM_BASE_URL = "https://evil.example/v1";
+    const cfg = loadConfig();
+    expect(cfg.publicUpstreamEnabled).toBe(false);
+    // A stale/invalid URL for a disabled provider must not block startup.
+    expect(cfg.publicUpstreamBaseURL).toBe("https://evil.example/v1");
+  });
+
+  test("still validates the public upstream URL when the route is enabled", () => {
+    process.env.AUTH_TOKENS = "tok";
+    process.env.PUBLIC_UPSTREAM_ENABLED = "true";
+    process.env.PUBLIC_UPSTREAM_BASE_URL = "https://evil.example/v1";
+    expect(() => loadConfig()).toThrow();
+  });
+
   test("parses the public upstream configuration", () => {
     process.env.AUTH_TOKENS = "tok";
     process.env.PUBLIC_UPSTREAM_ENABLED = "true";

@@ -1,27 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  applyCors,
-  corsPreflight,
-  resolveApiKeys,
-  unconfiguredHandler,
-} from "../../app/lib/proxy.ts";
-
-describe("resolveApiKeys (hosted deployment)", () => {
-  test("fails closed when API_KEYS is unset", () => {
-    expect(resolveApiKeys({})).toEqual([]);
-    expect(resolveApiKeys({ API_KEYS: "" })).toEqual([]);
-    expect(resolveApiKeys({ API_KEYS: "   " })).toEqual([]);
-  });
-
-  test("prefers an explicit API_KEYS value", () => {
-    expect(resolveApiKeys({ API_KEYS: "sk-custom" })).toEqual(["sk-custom"]);
-  });
-
-  test("splits comma/whitespace lists and dedupes", () => {
-    expect(resolveApiKeys({ API_KEYS: " a , b\nc;b " })).toEqual(["a", "b", "c"]);
-  });
-});
+import { applyCors, corsPreflight, unconfiguredHandler } from "../../app/lib/proxy.ts";
 
 describe("cors", () => {
   test("preflight answers 204 with open CORS headers", () => {

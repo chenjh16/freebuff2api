@@ -17,6 +17,20 @@
   （`freebuff2api` / `opencode` / `pollinations` / `felo`）。Freebuff 注册表模型
   仅在收到 `freebuff/<model>` 时路由，内部再去掉 `freebuff/` 命名空间后以规范
   注册表 ID 调用上游。已同步更新全部文档、单元测试与端到端测试。
+- **配置路径与默认模型对齐**：`config.json` 自动发现新增
+  `~/.config/freebuff2api/config.json`（与 `freebuff2api login` 的凭证目录一致），
+  并保留旧位置 `~/.freebuff2api/` 兜底；`env.example` 与 `config.example.json` 的
+  公共模型白名单示例统一为 `provider/model` 前缀 ID，移除“裸别名可达”的过期表述；
+  托管页面默认模型改为公共渠道 `opencode/deepseek-v4-flash-free`（免登录即可体验）。
+- **排队超载与关闭区分**：server 等待队列打满时返回 `503 request_queue_full`
+  （此前误报 `server_closing`）；未配置上游 token 时 `TokenManager` 明确报
+  “未配置 token”而不是“全部冷却”。
+- **清理**：移除死代码（`resolveApiKeys`、`QUEUED_STATUSES` 不可达分支、
+  `parseArgs` 的 help 空分支）；`BodyTooLargeError` 收敛为 `src/handler.ts` 单一
+  定义；`/api/auth/register` 复用 `clearLoginCookie()`；`injectUpstreamMetadata`
+  不再原地改写客户端 messages 数组。
+- **模型目录变更告警**：`ModelRegistry` 远程刷新后若模型集合发生变化，日志输出
+  增减明细，便于发现上游常量解析的静默漂移。
 
 ### Fixed
 
@@ -46,6 +60,18 @@
   `dist/index.js`）
 - 预览命令文档修正：`bun run dev - - -p 3000 -H 0.0.0.0` 中的裸 `-` 会被
   `next dev` 当作项目目录并报错，正确写法为 `bun run dev -- -H 0.0.0.0`
+- **公共上游 URL 校验仅在启用时执行**：`PUBLIC_UPSTREAM_ENABLED=false` 时不再
+  校验（也不再因残留的非 opencode.ai 地址）阻塞启动
+- **托管冷启动不阻塞**：Web 部署的 `ModelRegistry` 先加载兜底目录、远程目录在
+  后台刷新（首请求不再等待上游抓取）；server 对已写 413 响应的
+  `ResponseSentError` 静默返回，不再刷误导性错误日志
+- **文档与实现对齐**：修正 docs 02/06 的凭证表述（token 走
+  `Authorization: Bearer`，`x-freebuff-acting-user-id` 携带用户 id）、
+  zh README 的 E2E 门控表述、docs 08 的 `API_KEYS` fail-closed 范围与登录事务
+  进程本地性说明；docs 07 补 `PROXY_SECRET`/`PROXY_SECRET_FILE` 环境变量行；
+  docs 05 标注 fable 仅远程可用；移除 `session.refresh()` 空 try/catch；
+  `DEFAULT_MAX_BODY_BYTES` 收敛到 `config.ts` 单一来源并抽取共享
+  `readJsonBody` 助手；新增 3 个单元测试（URL 校验门控 ×2、兜底先行 ×1）
 
 ### Changed
 

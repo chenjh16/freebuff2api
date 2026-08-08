@@ -59,6 +59,10 @@ following priority (implemented by `agentForModel()`):
 | `file-picker` / `file-picker-max` / `file-lister` / `researcher-web` / `researcher-docs` / `basher` | `google/gemini-3.5-flash-lite` |
 | `editor-lite` / `code-reviewer-lite` | `minimax/minimax-m3` |
 
+> `base2-free-fable` → `anthropic/claude-fable-5` is **remote-only**: the
+> offline fallback mapping does not include fable, so it becomes available
+> only after the catalog has been fetched from upstream.
+
 ## Anatomy of an agent definition (tools/captured/agentdefs-full.json)
 
 The agent definitions reported by the official CLI contain (example:
@@ -100,7 +104,7 @@ definitions: `spawn_agents`, `read_files`, `read_subtree`, `write_todos`,
 
 ## Supported models and availability probing
 
-The curated fallback currently advertises and routes these model ids:
+The curated fallback currently covers these Freebuff **registry** model ids:
 
 - `deepseek/deepseek-v4-pro`
 - `deepseek/deepseek-v4-flash`
@@ -110,9 +114,12 @@ The curated fallback currently advertises and routes these model ids:
 - `z-ai/glm-5.2`
 - `google/gemini-3.5-flash-lite`
 
-When the official repository is reachable at startup, the remote mapping is
-used instead. Therefore `/v1/models` means “known and routable”; it does not
-guarantee that a live session or quota is available at that moment.
+At the proxy surface each one is advertised and routable only in its
+namespaced form `freebuff/<model>` (e.g. `freebuff/deepseek/deepseek-v4-flash`);
+bare registry ids are neither listed nor routable. When the official
+repository is reachable at startup, the remote mapping is used instead.
+Therefore `/v1/models` means “known and routable”; it does not guarantee that
+a live session or quota is available at that moment.
 
 A full availability probe makes a real chat call for every advertised model
 and can consume quota:

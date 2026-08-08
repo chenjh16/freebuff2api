@@ -126,5 +126,8 @@ and can be continued with `--resume`.
   the user record → credentials persisted
 - ✅ Resume flow: after an interruption, `--resume` continues waiting on the
   same link
-- ✅ The server automatically uses the saved token (`acting_user_id` in
-  `/healthz` is correct)
+- ✅ The server automatically uses the saved token: upstream requests are
+  authenticated with `Authorization: Bearer <token>`, and the account's user
+  id is additionally sent as the `x-freebuff-acting-user-id` header (the
+  public `/healthz` deliberately exposes only liveness, never account
+  identity)

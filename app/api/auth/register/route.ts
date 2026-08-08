@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getRuntime } from "../../../lib/proxy";
 import { generateApiKey } from "../../../lib/account";
 import {
+  clearLoginCookie,
   clearLoginTransaction,
   loginTransactionId,
   takeLoginTransactionUser,
@@ -46,7 +47,7 @@ export async function POST(request: Request): Promise<Response> {
       apiKey,
       user: { id: me.id ?? null, name: me.name ?? null, email: me.email ?? null },
     });
-    response.headers.set("Set-Cookie", "freebuff_login=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax");
+    response.headers.set("Set-Cookie", clearLoginCookie());
     return response;
   } catch {
     return NextResponse.json({ error: "register failed" }, { status: 500 });

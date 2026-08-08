@@ -111,7 +111,7 @@ const DEFAULTS: RawConfig = {
   PUBLIC_UPSTREAM_TIMEOUT: "20s",
 };
 
-const DEFAULT_MAX_BODY_BYTES = 16_000_000;
+export const DEFAULT_MAX_BODY_BYTES = 16_000_000;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 32;
 
 /** Parse a Go-style duration like "15m", "6h", "90s", "1h30m" into ms. */
@@ -189,10 +189,15 @@ function dedupe(values: string[]): string[] {
 
 function autoConfigPath(explicitPath?: string): string {
   if (explicitPath?.trim()) return explicitPath.trim();
-  // Look for config.json in CWD, then in the user's home directory.
+  // Look for config.json in CWD, then in the platform config directory
+  // (~/.config/freebuff2api — the same directory `freebuff2api login` uses
+  // for its credentials), then in the legacy home location (~/.freebuff2api).
   const candidates = [join(process.cwd(), "config.json")];
   const home = homedir();
-  if (home) candidates.push(join(home, ".freebuff2api", "config.json"));
+  if (home) {
+    candidates.push(join(home, ".config", "freebuff2api", "config.json"));
+    candidates.push(join(home, ".freebuff2api", "config.json"));
+  }
   return candidates.find((path) => existsSync(path)) ?? "";
 }
 
@@ -299,9 +304,6 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
   // Token resolution: env / config.json AUTH_TOKENS first, then the saved
   // `freebuff2api login` credentials (~/.config/freebuff2api/credentials.json).
   const publicUpstreamBaseURL = (options.publicUpstreamBaseURL ?? raw.PUBLIC_UPSTREAM_BASE_URL ?? DEFAULT_PUBLIC_UPSTREAM_BASE_URL).replace(/\/+$/, "");
-  // This setting is specifically the OpenCode override. Pollinations and Felo
-  // use their own fixed endpoints and are never redirected by it.
-  validatePublicUpstreamURL(publicUpstreamBaseURL, ["opencode.ai"]);
   const publicUpstreamProviders = dedupe(options.publicUpstreamProviders ?? raw.PUBLIC_UPSTREAM_PROVIDERS ?? ["opencode", "pollinations", "felo"]);
   const publicUpstreamModels = dedupe(options.publicUpstreamModels ?? raw.PUBLIC_UPSTREAM_MODELS ?? [...DEFAULT_PUBLIC_UPSTREAM_MODELS]);
   const publicUpstreamImageModels = dedupe(
@@ -310,6 +312,13 @@ export function loadConfig(options: LoadConfigOptions = {}): Config {
       [...DEFAULT_POLLINATIONS_IMAGE_MODELS.map((model) => `pollinations/${model}`)],
   );
   const publicUpstreamEnabled = options.publicUpstreamEnabled ?? /^(1|true|yes|on)$/i.test(raw.PUBLIC_UPSTREAM_ENABLED ?? "true");
+  if (publicUpstreamEnabled) {
+    // This setting is specifically the OpenCode override. Pollinations and
+    // Felo use their own fixed endpoints and are never redirected by it. The
+    // URL is only validated while the public route is enabled — a disabled
+    // provider never uses it, so a stale invalid value must not block startup.
+    validatePublicUpstreamURL(publicUpstreamBaseURL, ["opencode.ai"]);
+  }
 
   const authTokens = dedupe(options.authTokens ?? raw.AUTH_TOKENS ?? []);
   const credentials = loadCredentials();

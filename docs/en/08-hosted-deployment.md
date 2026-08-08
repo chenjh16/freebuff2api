@@ -14,7 +14,6 @@ Router app under `app/` that mounts the **exact same** request handler
 │  GET  /v1/models             →  │  app/lib/proxy.ts (lazy singleton)      │
 │  POST /v1/chat/completions   →  │  ├─ loadConfig()                        │
 │  POST /v1/images/generations →  ┘  ├─ ModelRegistry (free agents)         │
-│                                    ├─ ModelRegistry (free agents)         │
 │                                    ├─ TokenManager (free sessions)        │
 │                                    ├─ RunManager (agent runs)             │
 │                                    └─ createHandler() from src/handler.ts │
@@ -52,7 +51,7 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | --- | -------- | ------- | ------- |
 | `AUTH_TOKENS` | no | saved login credentials (standalone only) | Shared Freebuff auth token(s), comma-separated. Optional when users sign in through the hosted web console; needed to provide a shared token pool. |
 | `PROXY_SECRET` | no | auto | Stable secret that encrypts web-login API keys (`sk-fb-…`). Set a fixed value so keys survive redeploys. |
-| `API_KEYS` | no | empty (fail closed) | Explicit high-entropy keys clients must present. Hosted `/v1` requests are rejected until this is configured, preventing a published default credential. |
+| `API_KEYS` | no | empty (fail closed) | Explicit high-entropy keys clients must present. Without it hosted `/v1` rejects unauthenticated requests (web-login `sk-fb-…` keys still work), preventing a published default credential. |
 | `SITE_ACCESS_TOKEN` | no | — | Gate token(s) for the web console, comma-separated. When set, visitors must present one (typed into the lock screen or via `?token=…`) to unlock the site. |
 | `UPSTREAM_BASE_URL` | no | `https://www.codebuff.com` | Freebuff backend base URL. |
 | `REQUEST_TIMEOUT` | no | `15m` | Upstream request timeout. |
@@ -62,7 +61,7 @@ Authentication for the API surface is `Authorization: Bearer <key>` or
 | `PUBLIC_UPSTREAM_ENABLED` | no | `true` | Try fixed public providers first; set `false` to disable all public routes. |
 | `PUBLIC_UPSTREAM_PROVIDERS` | no | `opencode,pollinations,felo` | Fixed provider ids to enable; arbitrary ids are ignored. |
 | `PUBLIC_UPSTREAM_BASE_URL` | no | `https://opencode.ai/zen/v1` | OpenCode-only HTTPS override; Pollinations/Felo endpoints remain fixed. |
-| `PUBLIC_UPSTREAM_MODELS` | no | aggregated allowlist | Chat model allowlist (canonical `provider/model` ids). |
+| `PUBLIC_UPSTREAM_MODELS` | no | aggregated allowlist | Chat model allowlist — canonical `provider/model` ids (OpenCode entries may keep their historical bare ids for backward compatibility). |
 | `PUBLIC_UPSTREAM_IMAGE_MODELS` | no | `pollinations/flux,pollinations/turbo,pollinations/zimage` | Image model allowlist for `POST /v1/images/generations`. |
 | `PUBLIC_UPSTREAM_TIMEOUT` | no | `20s` | Initial response timeout before another public route or authenticated fallback. |
 
@@ -98,6 +97,11 @@ itself — the flow mirrors `freebuff2api login`:
    instances may be ephemeral or horizontally scaled, revocation is not a
    durable cross-instance session store. Use a stable `PROXY_SECRET` and a
    real shared state store if durable revocation is a requirement.
+
+Login transactions (`/api/auth/start` → `/api/auth/status` | `/register`) are
+likewise kept in per-process memory. In multi-instance deployments the
+browser's login calls must land on the same instance (sticky sessions), or the
+flow fails with an unknown-transaction error.
 
 So `AUTH_TOKENS` is **optional** in hosted mode: it only feeds the shared
 pool used by the default `API_KEYS`. The key-encryption secret is derived
